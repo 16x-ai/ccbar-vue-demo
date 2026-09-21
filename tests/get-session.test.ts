@@ -128,6 +128,50 @@ test("拼出 SDK 能用的会话：注册密码是解出来的明文", async () 
   }
 });
 
+test("会话 TTL 按密码票的 expiresIn 算（票先过期会导致 REGISTER 401）", async () => {
+  const originalFetch = globalThis.fetch;
+  let seatExpiresIn = 600;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/openapi/v1/token/fs"))
+      return jsonResponse({ code: 0, data: { token: "fs-token", expires: 7200 } });
+    return jsonResponse({
+      code: 0,
+      data: {
+        username: "p8001",
+        password: encryptLikeLegacy("sip-password"),
+        domain: "sip.example.test",
+        expiresIn: seatExpiresIn,
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const short = (await getLegacySession({
+      host: "https://api.example.test",
+      appKey: "k",
+      appSecret: "s",
+      extension: "8001",
+      sipWs: "wss://sip.example.test/api/fs/sip-ws",
+    })) as Record<string, any>;
+    const shortTtl = Math.round(short.expiresAt - Date.now() / 1000);
+    // 票 600 秒（token 更长时也按票算），并留 180 秒刷新缓冲；±1 秒容忍跨秒边界
+    assert.ok(Math.abs(shortTtl - 420) <= 1, `TTL=${shortTtl}，期望 420`);
+
+    seatExpiresIn = 120;
+    const shorter = (await getLegacySession({
+      host: "https://api.example.test2",
+      appKey: "k",
+      appSecret: "s",
+      extension: "8001",
+      sipWs: "wss://sip.example.test/api/fs/sip-ws",
+    })) as Record<string, any>;
+    const shorterTtl = Math.round(shorter.expiresAt - Date.now() / 1000);
+    // 票很短时至少留 60 秒，别把 SDK 逼到疯狂刷新
+    assert.ok(shorterTtl <= 60 && shorterTtl >= 59, `TTL=${shorterTtl}，期望 60`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("网关报错时透传 message，不把半成品会话给页面", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => jsonResponse({ code: 1101, message: "坐席不存在" })) as typeof fetch;

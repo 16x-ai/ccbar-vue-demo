@@ -13,6 +13,8 @@ const SIP_WS_PORT_DEFAULT = 7443;
 const AES_KEY = "q7X4p6MvK1z8Lb3A"; // 16 字节
 const AES_IV = "W9e2T4mN0aQ7Ru6C"; // 16 字节
 const SESSION_TTL_FALLBACK = 600;
+// 提前这么久换票：SDK 自己还会在会话到期前 60 秒刷新，两层加起来留够余量
+const PASSWORD_REFRESH_BUFFER = 180;
 const ICE_PORT_DEFAULT = 3478;
 
 // 与参考实现里的 capabilities 一致：旧平台这六项都支持
@@ -149,6 +151,15 @@ export async function getLegacySession({
   const password = decryptSeatPassword(seat.password);
   if (!password) throw new Error("坐席账号里的 password 解密后为空");
 
+  // SIP 密码是「票」，有效期由坐席账号接口的 expiresIn 决定（参考实现 _accountRefreshDelayMs 的默认值也是 600）。
+  // 会话 TTL 必须按这张票算、并留出刷新缓冲，否则票先过期、后续 REGISTER 会 401。
+  const seatTtl = expiresToSeconds(seat.expiresIn ?? seat.expires_in, SESSION_TTL_FALLBACK);
+  const tokenTtl = expiresToSeconds(tokenExpires);
+  const ttl = Math.max(60, Math.min(tokenTtl, seatTtl) - PASSWORD_REFRESH_BUFFER);
+  console.log(
+    `[ccbar-seat-account] 票有效期 seat=${seatTtl}s token=${tokenTtl}s → 会话 TTL=${ttl}s`,
+  );
+
   const wssUrl = buildSipWsUrl({
     configured: sipWs,
     domain: seat.domain,
@@ -157,7 +168,6 @@ export async function getLegacySession({
     token: fsToken,
   });
   const sipDomain = sipDomainOf(seat.domain, wssUrl);
-  const ttl = expiresToSeconds(tokenExpires);
   const turnIp = String(seat.turnIp || "").trim();
   const turnPort = Number(seat.turnPort) || ICE_PORT_DEFAULT;
 

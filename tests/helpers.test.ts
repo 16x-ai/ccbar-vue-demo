@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortExtension, validateApiHost, validateSipWs } from "../src/lib/helpers.ts";
+import { prefixExtension, shortExtension, validateApiHost, validateSipWs } from "../src/lib/helpers.ts";
 
 test("API 主机必须由用户填写（留空时报错，不替你猜环境）", () => {
   assert.throws(() => validateApiHost(""), /API 主机/);
@@ -37,6 +37,16 @@ test("软电话 WSS 是必填项，且必须是 ws/wss 地址", () => {
     validateSipWs("  wss://sip.example.test/api/fs/sip-ws  "),
     "wss://sip.example.test/api/fs/sip-ws",
   );
+});
+
+test("内呼把企业前缀拼在号码前（与参考实现 insideCall 一致）", () => {
+  assert.equal(prefixExtension("1002", "p"), "p1002");
+  // 已经带前缀的不重复拼
+  assert.equal(prefixExtension("p1002", "p"), "p1002");
+  // 没配前缀就原样拨
+  assert.equal(prefixExtension("1002", ""), "1002");
+  assert.equal(prefixExtension(" 1002 ", " p "), "p1002");
+  assert.equal(prefixExtension("", "p"), "");
 });
 
 test("显示分机去掉 customerPrefix（与参考页 shortExtension 一致）", () => {

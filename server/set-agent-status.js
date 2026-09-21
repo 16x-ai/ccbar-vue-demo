@@ -1,4 +1,4 @@
-import { getToken } from "./get-token.js";
+import { getFsToken } from "./get-token.js";
 
 // 设置坐席状态：对齐 xcall fork 的 ccbar.js（setSeatStatus）。
 // 平台只认三个字符串，忙碌与休息都是 On Break，用 reason 区分：
@@ -27,7 +27,7 @@ export async function setSeatStatus({
   if (!seat) throw new Error("分机号 extension 不能为空");
   if (!SEAT_STATUSES.has(status)) throw new Error(`不支持的坐席状态：${status}`);
 
-  const tokenResult = await getToken({ isPublic: true, extension: seat, host, appKey, appSecret });
+  const tokenResult = await getFsToken({ extension: seat, host, appKey, appSecret });
   const fsToken = String(tokenResult?.data?.token || "").trim();
   if (!fsToken) throw new Error("Token 接口没有返回 token");
 
@@ -56,7 +56,10 @@ export async function setSeatStatus({
     );
   }
   if (!response.ok || result.code !== 0) {
-    throw new Error(result?.message || `设置坐席状态失败（HTTP ${response.status}）`);
+    // 把实际请求地址带上：平台报「接口不存在 / 字段不对」时，一眼能看出打的是哪个路径
+    throw new Error(
+      `${result?.message || `设置坐席状态失败（HTTP ${response.status}）`}（POST ${apiUrl}）`,
+    );
   }
   return { status, reason };
 }

@@ -9,6 +9,7 @@
  */
 import { computed, ref } from "vue";
 import IncomingCallModal from "./components/IncomingCallModal.vue";
+import LoadingOverlay from "./components/LoadingOverlay.vue";
 import LogPanel from "./components/LogPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import { usePhone } from "./lib/usePhone";
@@ -212,6 +213,8 @@ function saveSettings() {
       @close="settingsOpen = false"
       @save="saveSettings"
     />
+
+    <LoadingOverlay v-if="phone.loading.value" :text="phone.loading.value" />
 
     <IncomingCallModal
       v-if="phone.incoming.value.length"

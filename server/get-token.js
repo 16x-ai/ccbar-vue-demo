@@ -166,6 +166,35 @@ export function formatTokenError(apiUrl, httpStatus, result) {
   return `HTTP ${httpStatus}`;
 }
 
+// fs token 缓存：参考实现（ccbar.js）是一次签入用同一张票、按有效期换新的，
+// 不是每次调用都重新签。这里做同样的事，顺带减少平台的 token 请求量。
+const fsTokenCache = new Map();
+
+function expiresToMs(value) {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return 600_000;
+  return raw > 86400 ? raw : raw * 1000;
+}
+
+/**
+ * 取 fs token（带缓存）。三次调用（取会话、刷新会话、设置坐席状态）共用同一张票。
+ */
+export async function getFsToken({ extension, host, appKey, appSecret } = {}) {
+  const key = `${host}|${extension}|${appKey}`;
+  const cached = fsTokenCache.get(key);
+  // 提前 2 分钟换新，避免贴着过期用
+  if (cached && cached.expiresAt - Date.now() > 120_000) {
+    return { code: 0, data: { token: cached.token, expires: cached.expires } };
+  }
+  const result = await getToken({ isPublic: true, extension, host, appKey, appSecret });
+  const token = String(result?.data?.token || "");
+  const expires = Number(result?.data?.expires) || 0;
+  if (token) {
+    fsTokenCache.set(key, { token, expires, expiresAt: Date.now() + expiresToMs(expires) });
+  }
+  return result;
+}
+
 export async function getToken({
   isPublic = true,
   extension,
@@ -234,7 +263,7 @@ export async function getToken({
     throw new Error(`接口返回了非 JSON 响应（HTTP ${response.status}）：${responseText}`);
   }
   if (!response.ok || result.code !== 0) {
-    throw new Error(formatTokenError(apiUrl, response.status, result));
+    throw new Error(`${formatTokenError(apiUrl, response.status, result)}（POST ${apiUrl}）`);
   }
   return result;
 }

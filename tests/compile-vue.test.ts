@@ -8,6 +8,7 @@ const components = [
   "src/components/SettingsDialog.vue",
   "src/components/LogPanel.vue",
   "src/components/IncomingCallModal.vue",
+  "src/components/LoadingOverlay.vue",
 ];
 
 for (const filename of components) {

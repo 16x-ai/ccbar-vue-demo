@@ -52,36 +52,11 @@ function tokenProxyPlugin(tokenOrigin: string): Plugin {
   };
 }
 
-function legacyCcbarAssetsPlugin(legacyRoot: string): Plugin {
-  const assets = new Map([
-    ["/legacy/ccbar.js", "ccbar.js"],
-    ["/legacy/crypto.js", "crypto.js"],
-    ["/legacy/message.js", "message.js"],
-    ["/legacy/jssip.js", "jssip-3.4.4.js"],
-  ]);
-  return {
-    name: "ccbar-legacy-assets",
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        const filename = assets.get((req.url || "").split("?")[0]);
-        if (!filename) {
-          next();
-          return;
-        }
-        const file = path.join(legacyRoot, filename);
-        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-        res.end(fs.readFileSync(file));
-      });
-    },
-  };
-}
-
 const sdkRoot = fileURLToPath(new URL("../ccbar-web-sdk", import.meta.url));
 const sdkSrc = path.join(sdkRoot, "src");
 // 本地有 SDK 源码时优先用源码（方便调 SDK），没有就用 npm 上的 @16x/webphone-sdk —— 客户机器上只有后者。
 // 想强制走 npm 包（例如验证客户那台机器的行为）：CCBAR_LOCAL_SDK=0 npm run build
 const useLocalSdk = process.env.CCBAR_LOCAL_SDK !== "0" && fs.existsSync(sdkSrc);
-const legacyRoot = fileURLToPath(new URL("../xcall/ccbar", import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -137,7 +112,6 @@ export default defineConfig(({ mode }) => {
       ...(useLocalSdk ? { exclude: ["@16x/webphone-sdk"] } : {}),
     },
     plugins: [
-      legacyCcbarAssetsPlugin(legacyRoot),
       tokenProxyPlugin(tokenOrigin),
       vue({
         template: {

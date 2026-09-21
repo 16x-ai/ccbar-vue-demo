@@ -14,7 +14,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions } from "@16x/webphone-sdk";
-import { shortExtension } from "./helpers";
+import { prefixExtension, shortExtension } from "./helpers";
 import {
   agentStatus,
   callStatus,
@@ -70,6 +70,8 @@ export function usePhone() {
   const feedback = ref("");
   /** 正在执行的动作名，用来禁用按钮防重复点击 */
   const busy = ref("");
+  /** 全屏加载提示文案（空＝不显示）：签入、设置坐席状态这类要等服务的操作会用它 */
+  const loading = ref("");
   const logs = ref<LogLine[]>([]);
   const incoming = ref<IncomingCall[]>([]);
   const placeholder = reactive<Record<LogPanel, string>>({
@@ -90,6 +92,8 @@ export function usePhone() {
   const legacyPlatform = isLegacyPlatform();
   /** 旧平台账号里的分机前缀，显示分机时要去掉 */
   let customerPrefix = "";
+  /** 平台认的坐席账号（取回会话后才知道，可能带企业前缀）；置忙 / 退签要用它 */
+  let seatAccount = config.extension;
   let activeCallId = "";
   let callRetry = { target: "", attempt: 0, timer: 0, startedAt: 0, inFlight: false };
 
@@ -219,8 +223,14 @@ export function usePhone() {
     if (!instance) throw new Error("SDK 未就绪，请刷新页面");
     extension.value = config.extension;
     appendFlowLog("info", "sip", `开始签入 extension=${config.extension} host=${config.host}`);
-    // 后面 SDK 会自己走 tokenProvider / sessionProvider 去拿会话，再发 REGISTER
-    await instance.connect({ extension: config.extension });
+    // 取会话 → 连 WSS → REGISTER 要几秒，期间盖全屏遮罩，别让人以为卡住了
+    loading.value = "正在签入…";
+    try {
+      // 后面 SDK 会自己走 tokenProvider / sessionProvider 去拿会话，再发 REGISTER
+      await instance.connect({ extension: config.extension });
+    } finally {
+      loading.value = "";
+    }
   }
 
   async function signOut() {
@@ -231,7 +241,7 @@ export function usePhone() {
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
     if (legacyPlatform) {
       const [status, reason] = SEAT_STATUS_TEXT.offline;
-      void setSeatStatus(config, status, reason, appendFlowLog).catch((error: unknown) => {
+      void setSeatStatus(config, seatAccount, status, reason, appendFlowLog).catch((error: unknown) => {
         appendFlowLog("warn", "seat", `置离线失败：${error instanceof Error ? error.message : error}`);
       });
     }
@@ -242,18 +252,26 @@ export function usePhone() {
     incoming.value = [];
   }
 
-  /** 外呼；extensionCall=true 时是内呼（SDK 会按平台的内部呼叫方式处理） */
+  /**
+   * 外呼 / 内呼。
+   * 内呼在旧平台上的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
+   * 不能只靠 SDK 的 type=extension —— 那只是在 INVITE 上加一个平台不认的头。
+   */
   async function dial(destination: string, extensionCall = false) {
     const instance = client.value;
     if (!instance) throw new Error("请先签入");
     stopAutoRedial();
-    callRetry = { target: destination, attempt: 0, timer: 0, startedAt: 0, inFlight: true };
+    const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix) : destination;
+    callRetry = { target, attempt: 0, timer: 0, startedAt: 0, inFlight: true };
+    const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix}）` : "";
     appendFlowLog(
       "info",
       "sip",
-      `${extensionCall ? "内呼" : "外呼"} ${destination}${extensionCall ? "（type=extension）" : ""}`,
+      `${extensionCall ? "内呼" : "外呼"} ${target}${note}（话机连接=${connection.value}）`,
     );
-    await instance.dial(extensionCall ? { destination, type: "extension" } : { destination });
+    await instance.dial(
+      extensionCall && !legacyPlatform ? { destination, type: "extension" } : { destination: target },
+    );
   }
 
   async function hangup() {
@@ -283,7 +301,12 @@ export function usePhone() {
   }
   /** 空闲 / 休息：走 SDK 的 setAgentStatus（最终由会话来源落到平台接口） */
   async function setAgent(status: "available" | "break") {
-    await client.value?.setAgentStatus(status);
+    loading.value = "正在设置坐席状态…";
+    try {
+      await client.value?.setAgentStatus(status);
+    } finally {
+      loading.value = "";
+    }
     agent.value = status;
   }
 
@@ -297,7 +320,12 @@ export function usePhone() {
       return;
     }
     const [status, reason] = SEAT_STATUS_TEXT.busy;
-    await setSeatStatus(config, status, reason, appendFlowLog);
+    loading.value = "正在设置坐席状态…";
+    try {
+      await setSeatStatus(config, seatAccount, status, reason, appendFlowLog);
+    } finally {
+      loading.value = "";
+    }
     agent.value = "busy";
   }
 
@@ -311,6 +339,9 @@ export function usePhone() {
       instance.on("connection.registered", () => {
         connection.value = "registered";
         registeredAt = Date.now();
+        // 与旧版一致：注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
+        // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
+        if (agent.value === "offline") agent.value = "available";
         const account = instance.getAgent()?.extension || config.extension;
         // 坐席账号可能带企业前缀，显示时去掉（参考页 shortExtension）
         extension.value = shortExtension(account, customerPrefix);
@@ -364,7 +395,11 @@ export function usePhone() {
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
-        appendFlowLog("error", "call", `呼叫失败 ${sipEventDetail(event)}`);
+        appendFlowLog("error", "call", `呼叫失败 connection=${connection.value} ${sipEventDetail(event)}`);
+        // 这个码是 JsSIP 在发 INVITE 之前抛的：UA 的 WebSocket 已经不在了（页面可能还显示已注册）
+        if (event.error.code === "CALL_OPERATION_NOT_ALLOWED") {
+          appendFlowLog("warn", "sip", "话机连接可能已断开：请点退签再签入后重试");
+        }
         removeIncoming(event.callId);
         callRetry.inFlight = false;
         showError(event.error.message);
@@ -396,6 +431,7 @@ export function usePhone() {
       // 旧平台：会话由我们自己的服务端拼好（server/get-session.js）
       const provider = createLegacySessionProvider(config, appendFlowLog, (account: SeatAccount) => {
         customerPrefix = String(account.customerPrefix || "");
+        seatAccount = String(account.username || seatAccount);
         appendFlowLog(
           "ok",
           "seat",
@@ -423,7 +459,7 @@ export function usePhone() {
     appendFlowLog(
       "info",
       "app",
-      `页面已就绪，等待签入（会话来源：${legacyPlatform ? "旧平台 seat/account/get" : "新平台 webphone/v1"}）`,
+      "页面已就绪，等待签入",
     );
   }
 
@@ -458,6 +494,7 @@ export function usePhone() {
     number,
     feedback,
     busy,
+    loading,
     connected,
     incoming,
     logs,

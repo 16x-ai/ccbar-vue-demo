@@ -135,16 +135,20 @@ export const SEAT_STATUS_TEXT: Record<"idle" | "busy" | "break" | "offline", [Se
 /**
  * 调服务端设置坐席状态（空闲 / 置忙 / 休息 / 退签）。
  * 服务端再带 fs token 去请求平台：POST {API主机}/openapi/token/v1/seats/set-status。
+ *
+ * 注意 extension 要传「坐席账号」而不是用户填的分机号：账号可能带企业前缀
+ * （例如账号 p8001、用户填 8001），平台按账号查坐席，传错会回「Data not found」。
  */
 export async function setSeatStatus(
   config: PhoneConfig,
+  account: string,
   status: SeatStatus,
   reason: string,
   log: LogFn,
 ): Promise<void> {
   log("info", "seat", `设置坐席状态 ${status}${reason ? `（${reason}）` : ""}`);
   const { ok, status: httpStatus, data } = await postJson(agentStatusUrl(config), {
-    extension: config.extension,
+    extension: account,
     status,
     reason,
     ...gatewayFields(config),
@@ -167,6 +171,9 @@ export function createLegacySessionProvider(
   log: LogFn,
   onAccount?: (account: SeatAccount) => void,
 ): SessionProvider {
+  // 平台按「坐席账号」认坐席：取回会话后就用它，别再退回用户填的分机号
+  let account = config.extension;
+
   async function fetchSession(): Promise<WebPhoneSession> {
     log("info", "seat", `开始获取坐席账号 ${sessionUrl(config)}`);
     const url = sessionUrl(config);
@@ -179,6 +186,7 @@ export function createLegacySessionProvider(
     if (!ok || !session.sip?.uri) {
       throw new Error(String(session.message || `获取坐席账号失败（HTTP ${status}）`));
     }
+    account = String(session.username || account);
     onAccount?.({ username: session.username, customerPrefix: session.customerPrefix });
     return session as WebPhoneSession;
   }
@@ -189,7 +197,7 @@ export function createLegacySessionProvider(
     // SDK 只表达「空闲 / 休息」，都走同一个平台接口；置忙 SDK 没有对应取值，页面直接调 setSeatStatus
     setAgentStatus: ({ status }) => {
       const [seatStatus, reason] = SEAT_STATUS_TEXT[status === "available" ? "idle" : "break"];
-      return setSeatStatus(config, seatStatus, reason, log);
+      return setSeatStatus(config, account, seatStatus, reason, log);
     },
   };
 }

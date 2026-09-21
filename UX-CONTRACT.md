@@ -6,13 +6,15 @@
 |---|---|
 | 签入 | `client.connect({ extension })`：内部 `initialize()` → `tokenProvider` → `POST /webphone/v1/sessions` → REGISTER |
 | 退签 | `client.disconnect()`（挂断所有通话、删会话） |
-| 外呼 / 内呼 | `client.dial({ destination })` / `client.dial({ destination, type: 'extension' })` |
+| 外呼 / 内呼 | `client.dial({ destination })`；内呼时号码先拼企业前缀（`prefixExtension`，与参考实现 `insideCall` 一致） |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })`（来电在接通前不是 active call，靠 `call.incoming` 的 callId 定位） |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')`；默认形态（旧平台）没有这个接口，点击提示「旧平台模式没有坐席状态接口」 |
 | 置忙 | 新 SDK 无 busy（`setBu()` 已废弃），按钮保留但点击提示不支持 |
 
 `dial` / `answer` / `setActiveCall` 在未连接时**同步抛错**，调用点必须 `try/catch`。按钮统一带 busy / 连接 / 号码条件禁用。
+
+**全屏加载**：签入（取会话 → 连 WSS → REGISTER，几秒钟）与设置坐席状态（空闲 / 置忙 / 休息）期间盖上全屏遮罩 + 转圈 + 文案（「正在签入…」「正在设置坐席状态…」），避免重复点击；操作结束（成功或失败）立即撤掉。
 
 ## 日志
 

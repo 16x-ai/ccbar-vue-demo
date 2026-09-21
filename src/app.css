@@ -551,3 +551,46 @@ button.ccbar_items,
     background: var(--green-soft);
     color: var(--green);
 }
+
+/* Vue 版补充：全屏加载遮罩（签入、设置坐席状态时盖住整页，避免重复点击） */
+.ccbar-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(1px);
+    cursor: progress;
+}
+
+.ccbar-loading-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 20px;
+    border-radius: 10px;
+    background: var(--paper);
+    box-shadow: 0 8px 24px rgba(26, 29, 35, 0.18);
+    font-size: 14px;
+    color: var(--ink);
+}
+
+.ccbar-loading-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--line);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: ccbar-spin 0.8s linear infinite;
+}
+
+@keyframes ccbar-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 用户在系统里关掉动画时，用一个静态的圆点代替转动 */
+@media (prefers-reduced-motion: reduce) {
+    .ccbar-loading-spinner { animation: none; border-top-color: var(--blue); }
+}

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getToken } from "./get-token.js";
+import { getFsToken } from "./get-token.js";
 
 // 旧平台（vxapi / call-ng 这一套）拿会话的三步，全部对齐参考实现 D:\code\xcall\ccbar\index.html：
 //   1) POST {API主机}/openapi/v1/token/fs   → { token, expires }（已有 getToken 负责加签）
@@ -68,9 +68,15 @@ function sipDomainOf(accountDomain, wssUrl) {
   return new URL(wssUrl).hostname;
 }
 
-function sessionTtlSeconds(value) {
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds <= 0) return SESSION_TTL_FALLBACK;
+/**
+ * token 接口返回的 expires 换算成秒。
+ * 平台有的回秒、有的回毫秒（旧 SDK 的默认值 3600000 就是毫秒写法），
+ * 大于一天的一律按毫秒处理，避免把 1 小时算成 1000 小时、导致会话永不刷新。
+ */
+export function expiresToSeconds(value, fallback = SESSION_TTL_FALLBACK) {
+  let seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return fallback;
+  if (seconds > 86400) seconds /= 1000;
   return Math.min(Math.max(Math.floor(seconds), 60), 86400);
 }
 
@@ -81,7 +87,7 @@ export async function getSeatAccount({
   extension,
   fetchImpl = fetch,
 } = {}) {
-  const tokenResult = await getToken({ isPublic: true, extension, host, appKey, appSecret });
+  const tokenResult = await getFsToken({ extension, host, appKey, appSecret });
   const fsToken = String(tokenResult?.data?.token || "").trim();
   if (!fsToken) throw new Error("Token 接口没有返回 token");
 
@@ -110,7 +116,9 @@ export async function getSeatAccount({
     );
   }
   if (!response.ok || result.code !== 0) {
-    throw new Error(result?.message || `获取坐席账号失败（HTTP ${response.status}）`);
+    throw new Error(
+      `${result?.message || `获取坐席账号失败（HTTP ${response.status}）`}（POST ${apiUrl}）`,
+    );
   }
   if (!result.data) throw new Error("坐席账号接口没有返回 data");
   return { seat: result.data, fsToken, tokenExpires: tokenResult?.data?.expires };
@@ -149,7 +157,7 @@ export async function getLegacySession({
     token: fsToken,
   });
   const sipDomain = sipDomainOf(seat.domain, wssUrl);
-  const ttl = sessionTtlSeconds(tokenExpires);
+  const ttl = expiresToSeconds(tokenExpires);
   const turnIp = String(seat.turnIp || "").trim();
   const turnPort = Number(seat.turnPort) || ICE_PORT_DEFAULT;
 

@@ -45,3 +45,12 @@ export function shortExtension(full: string, prefix: string): string {
   if (head && value.startsWith(head) && value.length > head.length) return value.slice(head.length);
   return value;
 }
+
+// 内呼：平台靠「企业前缀 + 分机号」认内线（参考实现 insideCall 就是这么拼的，没有别的标记）。
+// 已经带前缀的不重复拼；没配前缀就原样拨。
+export function prefixExtension(number: string, prefix: string): string {
+  const value = String(number || "").trim();
+  const head = String(prefix || "").trim();
+  if (!head || !value || value.startsWith(head)) return value;
+  return `${head}${value}`;
+}

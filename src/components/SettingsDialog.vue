@@ -74,7 +74,7 @@ const emit = defineEmits<{ close: []; save: [] }>();
         inputmode="numeric"
       />
 
-      <p class="ccbar-settings-hint">注册有效期会交给服务端写进会话（留空默认 600 秒） </p>
+      <p class="ccbar-settings-hint">控制多久重新 getAccount 换 SIP 密码。默认 600 秒。</p>
 
       <div class="ccbar-settings-actions">
         <button type="button" id="ccbar-settings-cancel" @click="emit('close')">取消</button>

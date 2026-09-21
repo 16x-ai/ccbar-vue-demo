@@ -33,7 +33,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http:/
 | 签入 | `client.connect({ extension })`（内部先 `initialize()`，再取 Token、建会话、REGISTER） |
 | 退签 | `client.disconnect()` |
 | 外呼 | `client.dial({ destination })` |
-| 内呼 | `client.dial({ destination, type: 'extension' })` |
+| 内呼 | `client.dial({ destination: 前缀+分机号 })`：旧平台的「内呼」就是把企业前缀（`customerPrefix`）拼在号码前，和参考实现 `insideCall` 一致 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上的 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })` |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `Set Agent Status`（Available / On Break+休息） |
@@ -52,7 +52,8 @@ D:\code\xcall\ccbar\index.html 的顺序把会话拼好：
 4. 返回 SDK 的 `WebPhoneSession`，页面用 SDK 的 `sessionProvider` 交给 SDK（SDK 3.1.0 起支持）
 
 坐席状态走 `POST /set-agent-status` → `POST {API主机}/openapi/token/v1/seats/set-status`，
-body `{ extension, status, reason }`，status 只有三个值：`Available`(空闲) / `On Break`(置忙 reason=忙碌、休息 reason=休息) / `Logged Out`(退签)。
+body `{ extension, status, reason }`，其中 **extension 传坐席账号**（会取回会话里的 `username`，可能带企业前缀，不是用户填的分机号）；
+status 只有三个值：`Available`(空闲) / `On Break`(置忙 reason=忙碌、休息 reason=休息) / `Logged Out`(退签)。
 
 这样页面不碰 AES 密钥、不依赖网关的跨域配置，平台侧也不用改造。相关环境变量：
 
@@ -113,7 +114,7 @@ dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转�
 
 - 页面 `import { CCBarClient } from "@16x/webphone-sdk"`。
 - 本地若存在 `D:\code\ccbar-web-sdk\src`，Vite 会 alias 到**源码**（方便边改 SDK 边调）；客户机器上没有该目录时自动用 **npm 包**。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
-- `public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 是**旧版脚本式 SDK**，页面已不再引用，暂时留着做回退；确认新链路稳定后可删。
+- 仓库里**不再有**旧版脚本式 SDK（`public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 已删）：页面只走 npm 包，交付包里也就不会混进另一套 1.1MB 的旧 SDK。需要对照旧实现时看 `D:\codeÊll\ccbar`。
 
 ## 脚本
 

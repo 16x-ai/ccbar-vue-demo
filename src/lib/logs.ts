@@ -106,6 +106,18 @@ export function sipEventDetail(payload: unknown): string {
     for (const key of ["code", "category", "retryable", "status", "serverCode", "message"])
       if (typeof error[key] === "string" || typeof error[key] === "number" || typeof error[key] === "boolean")
         detail[`error.${key}`] = error[key] as string | number | boolean;
+    // 底层原因（JsSIP 抛的 InvalidStateError 之类）藏在 cause 里：
+    // 只留名字/消息/代码，排障时够用，也不会把整棵错误对象刷进面板
+    const cause = error.cause as Record<string, unknown> | undefined;
+    if (cause && typeof cause === "object") {
+      for (const key of ["name", "message", "code"]) {
+        const value = cause[key];
+        if (typeof value === "string" || typeof value === "number")
+          detail[`error.cause.${key}`] = value;
+      }
+    } else if (typeof cause === "string") {
+      detail["error.cause"] = cause;
+    }
   }
   return Object.keys(detail).length ? stringifyLog(detail) : "";
 }

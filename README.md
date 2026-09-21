@@ -44,7 +44,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http:/
 1. **Token**：页面 `POST /get-token`（同源，body：`host / appKey / appSecret / extension / platform`）→ Vite 转给本地 Token 代理（`server/token-server.js`）→ 代理用 X-Ca + HMAC-SHA256 签名请求 `POST {API主机}/openapi/v1/webphone/tokens` → 返回 `{ accessToken, expiresAt, extension }`。路径与 xcall 坐席条的 `{base}/get-token` 一致；用 `file://` 打开页面时 base 取「API 主机」，否则取页面同源。
 2. **WebPhone API（会话）**：SDK 自己请求同源 `POST /webphone/v1/sessions` → Vite 的 `/webphone` 代理 → `WEBPHONE_PROXY_TARGET` → 平台返回会话（SIP URI、`transport.wssUrl` + 一次性 ticket、iceServers、policy）。
 
-SDK 从会话里取 WSS 与注册策略，所以**页面不再需要填软电话 WSS / 注册有效期**；设置里这两项只是随 Token 请求透传的覆盖项。
+SDK 从会话里取 WSS，所以**页面不需要填软电话 WSS**（设置里那项是覆盖项）。`SIP 注册有效期`会随请求交给服务端，由服务端写进会话的 `sip.registerExpires`（留空默认 600 秒；SDK 拿不到有效值时才回退 300 秒）。
 
 ### 旧平台形态（设置里勾「旧平台形态」）
 

@@ -36,4 +36,4 @@
 
 ## 设置
 
-API 主机、API KEY、API SECRET、内部分机（必填），软电话 WSS 与 SIP 注册有效期（覆盖项，可留空：SDK 默认从会话取 WSS、注册策略），**旧平台形态**（勾上＝会话改由服务端 `/get-session` 拼：`token/fs` + `seat/account/get` + AES 解密码，见 README），记录 SIP 原文（默认开，改完下次签入生效）。KEY / SECRET 只出现在设置框和 Token 请求体，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。切换平台形态会重建客户端，通话中或已签入时保存会被拒绝（先挂断签出）。无 alert/confirm。
+API 主机、API KEY、API SECRET、内部分机（必填），软电话 WSS（覆盖项，可留空：SDK 从会话取 WSS）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`），**旧平台形态**（勾上＝会话改由服务端 `/get-session` 拼：`token/fs` + `seat/account/get` + AES 解密码，见 README），记录 SIP 原文（默认开，改完下次签入生效）。KEY / SECRET 只出现在设置框和 Token 请求体，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。切换平台形态会重建客户端，通话中或已签入时保存会被拒绝（先挂断签出）。无 alert/confirm。

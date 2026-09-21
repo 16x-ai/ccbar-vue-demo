@@ -28,7 +28,8 @@ import type {
 function defaultApiHost(): string {
   return String(import.meta.env.VITE_API_HOST || "").trim();
 }
-// 与参考页一致：SIP 注册有效期留空按 600 秒（新 SDK 目前在适配器里固定 300 秒，这里只作为覆盖项透传）
+// 与参考页一致：SIP 注册有效期留空按 600 秒（两种形态都会把它交给会话：新平台随 token 请求透传，
+// 旧平台由 /get-session 写进 session.sip.registerExpires；SDK 没拿到值时才回退 300）
 const REGISTER_EXPIRES_MIN = 10;
 const REGISTER_EXPIRES_MAX = 3600;
 const REGISTER_EXPIRES_DEFAULT = 600;

@@ -1,12 +1,9 @@
-// 页面实际用到的纯函数：API 主机 / 软电话 WSS 校验、首通失败判定。
-// （新 SDK 那条路的 Token 契约校验不在这里，需要时从 ccbar-web-sdk 的文档补回。）
+// 页面实际用到的纯函数：API 主机 / 软电话 WSS 校验。
+// 首通失败判定在 logs.ts 的 isTemporarySipFailure（需要对 CCBarError 做 stringify）。
 
+// 只做规整（去掉尾部斜杠），**不改写域名**：每个客户/环境的主机由使用方自己填，页面不替他们换。
 export function migrateApiHost(value: string): string {
-  const text = value.trim().replace(/\/+$/, "");
-  if (/^https?:\/\/callapi-ng\.innopaas\.com$/i.test(text)) {
-    return "https://call-ng.innopaas.com";
-  }
-  return text;
+  return value.trim().replace(/\/+$/, "");
 }
 
 export function validateApiHost(value: string): string {
@@ -22,7 +19,7 @@ export function validateApiHost(value: string): string {
   } catch {
     /* 与旧坐席条一致：必须带协议。 */
   }
-  throw new Error("API 主机需以 http:// 或 https:// 开头。");
+  throw new Error("请填写 API 主机（接口网关地址，需以 http:// 或 https:// 开头）。");
 }
 
 export function validateSipWs(value: string): string {
@@ -36,9 +33,11 @@ export function validateSipWs(value: string): string {
   throw new Error("软电话 WSS 需以 wss:// 或 ws:// 开头。");
 }
 
-// JsSIP 把 408/410/430/480 统一映射成 cause='Unavailable'（fork 版注释同样提到这点）。
-// 这里只用来判断「值得再拨一次」，不做业务判断。
-export function isTemporarySipFailure(cause: unknown): boolean {
-  const text = String(cause == null ? "" : cause).trim();
-  return /^(unavailable|request timeout)$/i.test(text) || /^(408|480)$/.test(text);
+// 显示分机时去掉坐席账号里的 customerPrefix（参考页 shortExtension 同款）。
+// 例：账号 p8001 + 前缀 p → 8001；前缀不匹配就原样返回。
+export function shortExtension(full: string, prefix: string): string {
+  const value = String(full || "").trim();
+  const head = String(prefix || "").trim();
+  if (head && value.startsWith(head) && value.length > head.length) return value.slice(head.length);
+  return value;
 }

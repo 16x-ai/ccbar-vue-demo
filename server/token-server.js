@@ -1,18 +1,22 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
-import { getToken, getWebPhoneToken, toWebPhoneToken } from "./get-token.js";
+import { getWebPhoneToken } from "./get-token.js";
+import { getLegacySession } from "./get-session.js";
 
 const BIND = process.env.CCBAR_BIND || "127.0.0.1";
 const MAX_BODY = 64 * 1024;
 let listenPort = Number(process.env.TOKEN_PORT || process.env.PORT) || 3000;
 
+// 只有这一族路径，全部走 webphone 会话 token（旧版 /openapi/v1/token/fs 那条不再暴露：
+// 它发的票 SDK 用不了，留着只会被误配）
 const TOKEN_PATHS = new Set([
-  "/api/webphone-token",
   "/api/xcall/webphone-token",
   "/get-token",
   "/ccbar/get-token",
-  "/demo/get-token",
 ]);
+
+// 旧平台：走 token/fs + seat/account/get，由服务端拼出 SDK 能用的会话
+const SESSION_PATHS = new Set(["/get-session", "/ccbar/get-session"]);
 
 function corsHeaders(req) {
   const origin = req?.headers?.origin || "";
@@ -30,6 +34,15 @@ function sendJson(req, res, status, payload) {
     ...corsHeaders(req),
   });
   res.end(JSON.stringify(payload));
+}
+
+function requireGatewayConfig(body) {
+  if (!String(body.host || "").trim()) {
+    throw new Error("请填写 API 主机（接口网关地址）");
+  }
+  if (!String(body.appKey || "").trim() || !String(body.appSecret || "").trim()) {
+    throw new Error("请填写 API KEY 和 API SECRET");
+  }
 }
 
 function readBody(req, maxBytes) {
@@ -78,40 +91,33 @@ export const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && TOKEN_PATHS.has(urlPath)) {
     try {
       const body = await readBody(req, MAX_BODY);
-      const isPublic = body.isPublic !== false;
-      if (!String(body.host || "").trim()) {
-        throw new Error("请填写 API 主机");
-      }
-      if (!String(body.appKey || "").trim() || !String(body.appSecret || "").trim()) {
-        throw new Error("请填写 API KEY 和 API SECRET");
-      }
-      const params = {
-        isPublic,
+      requireGatewayConfig(body);
+      // /get-token 与 /ccbar/get-token 是坐席条一贯的路径（xcall 页 TOKEN_API 就是 {base}/get-token）
+      sendJson(req, res, 200, await getWebPhoneToken({
+        extension: body.extension,
+        platform: body.platform,
         host: body.host,
         appKey: body.appKey,
         appSecret: body.appSecret,
-      };
-      if (isPublic) params.extension = body.extension;
-      else {
-        params.userId = body.userId;
-        params.departmentId = body.departmentId;
-      }
-      if (urlPath === "/api/xcall/webphone-token") {
-        sendJson(req, res, 200, await getWebPhoneToken({
-          extension: body.extension,
-          platform: body.platform,
-          host: body.host,
-          appKey: body.appKey,
-          appSecret: body.appSecret,
-        }));
-        return;
-      }
-      const result = await getToken(params);
-      if (urlPath === "/api/webphone-token") {
-        sendJson(req, res, 200, toWebPhoneToken(result));
-        return;
-      }
-      sendJson(req, res, 200, result);
+      }));
+    } catch (error) {
+      sendJson(req, res, 500, { code: -1, message: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && SESSION_PATHS.has(urlPath)) {
+    try {
+      const body = await readBody(req, MAX_BODY);
+      requireGatewayConfig(body);
+      sendJson(req, res, 200, await getLegacySession({
+        host: body.host,
+        appKey: body.appKey,
+        appSecret: body.appSecret,
+        extension: body.extension,
+        sipWs: body.sipWs,
+        registerExpires: body.registerExpires,
+      }));
     } catch (error) {
       sendJson(req, res, 500, { code: -1, message: error.message });
     }

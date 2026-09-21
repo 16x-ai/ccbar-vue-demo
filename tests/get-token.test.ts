@@ -8,7 +8,7 @@ import {
   webPhoneCanonicalRequest,
   isBlockedApiHost,
   migrateApiHost,
-  toWebPhoneToken,
+
 } from "../server/get-token.js";
 
 test("SDK token requests use the webphone signing contract", async () => {
@@ -78,15 +78,14 @@ test("assertAllowedTokenHost rejects metadata URLs", () => {
   assert.doesNotThrow(() => assertAllowedTokenHost("https://x.16x.tech"));
 });
 
-test("callapi-ng 会改写成 call-ng", () => {
+test("API 主机只做规整，不改写域名", () => {
   assert.equal(
     migrateApiHost("https://callapi-ng.innopaas.com"),
-    "https://call-ng.innopaas.com",
+    "https://callapi-ng.innopaas.com",
   );
-  assert.equal(
-    migrateApiHost("https://call-ng.innopaas.com"),
-    "https://call-ng.innopaas.com",
-  );
+  assert.equal(migrateApiHost("https://customer-gateway.example.com/"), "https://customer-gateway.example.com");
+  assert.equal(migrateApiHost("customer-gateway.example.com"), "https://customer-gateway.example.com");
+  assert.equal(migrateApiHost(""), "");
 });
 
 test("透传后端 token 错误信息", () => {
@@ -99,20 +98,4 @@ test("透传后端 token 错误信息", () => {
   );
 });
 
-test("把旧 token/fs 响应映射成 SDK 的 accessToken", () => {
-  assert.equal(
-    toWebPhoneToken({
-      code: 0,
-      data: { token: "fs-token", expires: 2000000000, extension: "1000" },
-    }).accessToken,
-    "fs-token",
-  );
-  assert.equal(
-    toWebPhoneToken({
-      code: 0,
-      data: { token: "fs-token", expires: 2000000000, extension: "1000" },
-    }).expiresAt,
-    2000000000,
-  );
-  assert.throws(() => toWebPhoneToken({ code: 0, data: {} }), /token/);
-});
+

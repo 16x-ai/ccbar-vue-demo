@@ -6,7 +6,8 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig, loadEnv, searchForWorkspaceRoot, type Plugin } from "vite";
 
 function tokenProxyPlugin(tokenOrigin: string): Plugin {
-  const prefixes = ["/api/webphone-token", "/api/xcall/webphone-token", "/ccbar/", "/get-token"];
+  // /get-token：新平台会话 token；/get-session：旧平台会话（坐席账号 + SIP 密码）
+  const prefixes = ["/api/xcall/webphone-token", "/ccbar/", "/get-token", "/get-session"];
   return {
     name: "ccbar-token-proxy",
     configureServer(server) {
@@ -70,12 +71,22 @@ function legacyCcbarAssetsPlugin(legacyRoot: string): Plugin {
 
 const sdkRoot = fileURLToPath(new URL("../ccbar-web-sdk", import.meta.url));
 const sdkSrc = path.join(sdkRoot, "src");
+// 本地有 SDK 源码时优先用源码（方便调 SDK），没有就用 npm 上的 @16x/webphone-sdk —— 客户机器上只有后者。
+// 想强制走 npm 包（例如验证客户那台机器的行为）：CCBAR_LOCAL_SDK=0 npm run build
+const useLocalSdk = process.env.CCBAR_LOCAL_SDK !== "0" && fs.existsSync(sdkSrc);
 const legacyRoot = fileURLToPath(new URL("../xcall/ccbar", import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const target = env.WEBPHONE_PROXY_TARGET;
+  // 两种来源都读：.env（Vite 载入）与 shell 环境变量（便于临时验证）
+  const target = process.env.WEBPHONE_PROXY_TARGET || env.WEBPHONE_PROXY_TARGET;
+  // 平台实际的 /webphone/v1/* 前缀，默认就是 /webphone（等价于不改写）
+  const apiPrefix = (
+    process.env.WEBPHONE_API_PREFIX ||
+    env.WEBPHONE_API_PREFIX ||
+    "/webphone"
+  ).replace(/\/+$/, "");
   const tokenOrigin =
     process.env.TOKEN_PROXY_ORIGIN || "http://127.0.0.1:3000";
   return {
@@ -84,34 +95,39 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: [
-        {
-          find: "@16x/webphone-sdk/styles.css",
-          replacement: path.join(sdkSrc, "ui/styles/index.css"),
-        },
-        {
-          find: "@16x/webphone-sdk/shared-worker",
-          replacement: path.join(sdkSrc, "shared-worker.ts"),
-        },
-        {
-          find: "@16x/webphone-sdk/diagnostics",
-          replacement: path.join(sdkSrc, "diagnostics/index.ts"),
-        },
-        {
-          find: "@16x/webphone-sdk/legacy",
-          replacement: path.join(sdkSrc, "legacy/index.ts"),
-        },
-        {
-          find: "@16x/webphone-sdk/ui",
-          replacement: path.join(sdkSrc, "ui/index.ts"),
-        },
-        {
-          find: "@16x/webphone-sdk",
-          replacement: path.join(sdkSrc, "index.ts"),
-        },
+        ...(useLocalSdk
+          ? [
+              {
+                find: "@16x/webphone-sdk/styles.css",
+                replacement: path.join(sdkSrc, "ui/styles/index.css"),
+              },
+              {
+                find: "@16x/webphone-sdk/shared-worker",
+                replacement: path.join(sdkSrc, "shared-worker.ts"),
+              },
+              {
+                find: "@16x/webphone-sdk/diagnostics",
+                replacement: path.join(sdkSrc, "diagnostics/index.ts"),
+              },
+              {
+                find: "@16x/webphone-sdk/legacy",
+                replacement: path.join(sdkSrc, "legacy/index.ts"),
+              },
+              {
+                find: "@16x/webphone-sdk/ui",
+                replacement: path.join(sdkSrc, "ui/index.ts"),
+              },
+              {
+                find: "@16x/webphone-sdk",
+                replacement: path.join(sdkSrc, "index.ts"),
+              },
+            ]
+          : []),
       ],
     },
     optimizeDeps: {
-      exclude: ["@16x/webphone-sdk"],
+      // 只有走本地源码时才需要排除预打包；用 npm 包时要让 Vite 正常预打包
+      ...(useLocalSdk ? { exclude: ["@16x/webphone-sdk"] } : {}),
     },
     plugins: [
       legacyCcbarAssetsPlugin(legacyRoot),
@@ -132,6 +148,14 @@ export default defineConfig(({ mode }) => {
       ...(target
         ? {
             proxy: {
+              // 新 SDK 里写死请求 /webphone/v1/*；平台若挂在别的前缀，用 WEBPHONE_API_PREFIX 改写
+              "/webphone": {
+                target,
+                changeOrigin: true,
+                ws: true,
+                rewrite: (requestPath: string) =>
+                  requestPath.replace(/^\/webphone/, apiPrefix),
+              },
               "/openapi": { target, changeOrigin: true, ws: true },
             },
           }

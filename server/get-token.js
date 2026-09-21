@@ -1,7 +1,17 @@
 import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_HOST = process.env.CC_API_HOST || "https://x.16x.tech";
+// 没有默认主机：每个客户/环境不同，由请求体或 CC_API_HOST 提供
+const DEFAULT_HOST = process.env.CC_API_HOST || "";
+
+// 平台接口路径可配：不同环境/版本可能挂在别的路径上（.env 或 shell 环境变量）。
+// 注意要在调用时读 —— .env 由 dev.mjs 在 import 之后才加载，写成模块级常量会读不到。
+function webphoneTokenPath() {
+  return process.env.CC_WEBPHONE_TOKEN_PATH || "/openapi/v1/webphone/tokens";
+}
+function fsTokenPath() {
+  return process.env.CC_FS_TOKEN_PATH || "/openapi/v1/token/fs";
+}
 
 export function cleanCredential(value) {
   return String(value || "")
@@ -18,13 +28,11 @@ export function requireCredential(value, envName, label) {
   return resolved;
 }
 
+// 只做规整（补协议、去尾斜杠），不改写域名
 export function migrateApiHost(raw) {
   let host = String(raw || "").trim().replace(/\/+$/, "");
   if (!host) return host;
   if (!/^https?:\/\//i.test(host)) host = `https://${host}`;
-  if (/^https?:\/\/callapi-ng\.innopaas\.com$/i.test(host)) {
-    return "https://call-ng.innopaas.com";
-  }
   return host;
 }
 
@@ -83,7 +91,13 @@ export function webPhoneCanonicalRequest(method, path, body, timestamp, nonce) {
   return `${method.toUpperCase()}\n${path}\n${webPhoneBodyDigest(body)}\n${timestamp}\n${nonce}`;
 }
 
-export function createWebPhoneAuthentication(body, appKey, appSecret, now = Date.now()) {
+export function createWebPhoneAuthentication(
+  body,
+  appKey,
+  appSecret,
+  now = Date.now(),
+  path = webphoneTokenPath(),
+) {
   const timestamp = String(now);
   const nonce = crypto.randomBytes(16).toString("hex");
   return {
@@ -91,13 +105,7 @@ export function createWebPhoneAuthentication(body, appKey, appSecret, now = Date
     "X-Ca-Timestamp": timestamp,
     "X-Ca-Nonce": nonce,
     "X-Ca-Signature": hmacSha256(
-      webPhoneCanonicalRequest(
-        "POST",
-        "/openapi/v1/webphone/tokens",
-        body,
-        timestamp,
-        nonce,
-      ),
+      webPhoneCanonicalRequest("POST", path, body, timestamp, nonce),
       appSecret,
     ),
     "X-Ca-Signature-Method": "HMAC-SHA256",
@@ -158,29 +166,6 @@ export function formatTokenError(apiUrl, httpStatus, result) {
   return `HTTP ${httpStatus}`;
 }
 
-export function toWebPhoneToken(result) {
-  const data = result?.data;
-  if (!data || typeof data !== "object") {
-    throw new Error("获取 token 失败：响应没有 data");
-  }
-  const accessToken = String(data.token || data.accessToken || "").trim();
-  if (!accessToken) {
-    throw new Error("获取 token 失败：响应没有 token");
-  }
-  const raw = data.expiresAt ?? data.expires;
-  let expiresAt;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    if (raw > 1e12) expiresAt = Math.floor(raw / 1000);
-    else if (raw > 1e9) expiresAt = Math.floor(raw);
-    else expiresAt = Math.floor(Date.now() / 1000) + Math.floor(raw);
-  }
-  return {
-    accessToken,
-    ...(expiresAt !== undefined ? { expiresAt } : {}),
-    ...(data.extension ? { extension: data.extension } : {}),
-  };
-}
-
 export async function getToken({
   isPublic = true,
   extension,
@@ -193,7 +178,7 @@ export async function getToken({
   const resolvedKey = requireCredential(appKey, "CC_API_APP_KEY", "API KEY");
   const resolvedSecret = requireCredential(appSecret, "CC_API_APP_SECRET", "API SECRET");
   if (!cleanCredential(host)) {
-    throw new Error("请填写 API 主机，必须与 D:\\code\\xcall\\ccbar 设置里的 API 主机一致");
+    throw new Error("请填写 API 主机（接口网关地址）");
   }
   const resolvedHost = migrateApiHost(host);
   const server = assertAllowedTokenHost(resolvedHost);
@@ -203,13 +188,13 @@ export async function getToken({
     if (!extension) {
       throw new Error("分机号 extension 不能为空");
     }
-    apiPath = "/openapi/v1/token/fs";
+    apiPath = fsTokenPath();
     body = JSON.stringify({ extension: String(extension).trim() });
   } else {
     if (!userId || !departmentId) {
       throw new Error("userId 和 departmentId 均不能为空");
     }
-    apiPath = "/openapi/v1/token/fs/third";
+    apiPath = `${fsTokenPath()}/third`;
     body = JSON.stringify({ userId, departmentId });
   }
   const apiUrl = `${server.protocol}://${server.host}${apiPath}`;
@@ -263,21 +248,23 @@ export async function getWebPhoneToken({
 } = {}) {
   const resolvedKey = requireCredential(appKey, "CC_API_APP_KEY", "API KEY");
   const resolvedSecret = requireCredential(appSecret, "CC_API_APP_SECRET", "API SECRET");
-  if (!cleanCredential(host)) throw new Error("璇峰～鍐?API 涓绘満");
+  if (!cleanCredential(host)) throw new Error("请填写 API 主机（接口网关地址，不要填文档站）");
   const server = assertAllowedTokenHost(migrateApiHost(host));
   const resolvedExtension = cleanCredential(extension);
-  if (!resolvedExtension) throw new Error("鍒嗘満鍙?extension 涓嶈兘涓虹┖");
+  if (!resolvedExtension) throw new Error("分机号 extension 不能为空");
 
-  const apiPath = "/openapi/v1/webphone/tokens";
+  const apiPath = webphoneTokenPath();
   const body = JSON.stringify({
     subject: { type: "extension", extension: resolvedExtension },
     client: { id: "ccbar-vue-demo", platform },
   });
   const apiUrl = `${server.protocol}://${server.host}${apiPath}`;
+  console.log(`[ccbar-webphone-token] POST ${apiUrl}`);
   const response = await fetch(apiUrl, {
     method: "POST",
     headers: {
-      ...createWebPhoneAuthentication(body, resolvedKey, resolvedSecret),
+      // 签名里的 path 必须和实际请求路径一致（自定义 CC_WEBPHONE_TOKEN_PATH 时尤其重要）
+      ...createWebPhoneAuthentication(body, resolvedKey, resolvedSecret, Date.now(), apiPath),
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -289,14 +276,19 @@ export async function getWebPhoneToken({
   try {
     result = JSON.parse(responseText);
   } catch {
-    throw new Error(`Token 鎺ュ彛杩斿洖浜嗛潪 JSON 鍝嶅簲锛圚TTP ${response.status}锛夛細${responseText}`);
+    const preview = responseText.trim().slice(0, 200);
+    throw new Error(
+      `Token 接口返回了非 JSON 响应（HTTP ${response.status}）：${preview}` +
+        `。请求地址：POST ${apiUrl}` +
+        `；请确认这是接口网关地址（不是文档站），且该环境已开通 /openapi/v1/webphone/tokens`,
+    );
   }
   if (!response.ok || result.code !== "OK") {
     throw new Error(formatTokenError(apiUrl, response.status, result));
   }
   const data = result.data;
   if (!data || typeof data.accessToken !== "string" || !data.accessToken.trim()) {
-    throw new Error("Token 鎺ュ彛娌℃湁杩斿洖 accessToken");
+    throw new Error("Token 接口没有返回 accessToken");
   }
   return { accessToken: data.accessToken, expiresAt: data.expiresAt, extension: resolvedExtension };
 }

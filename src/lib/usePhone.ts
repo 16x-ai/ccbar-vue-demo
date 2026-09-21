@@ -1,69 +1,43 @@
-import { onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { CCBarClient } from "@16x/webphone-sdk";
+import type { CCBarCall } from "@16x/webphone-sdk";
+import { migrateApiHost, shortExtension, validateApiHost, validateSipWs } from "./helpers";
 import {
-  isTemporarySipFailure,
-  migrateApiHost,
-  validateApiHost,
-  validateSipWs,
-} from "./helpers";
-import {
-  SIP_ERROR_RE,
   SIP_LOG_RE,
+  agentStatus,
+  callStatus,
   cleanJsSipText,
+  connectionStatus,
+  isTemporarySipFailure,
   sipEventDetail,
   stringifyLog,
   timeStamp,
 } from "./logs";
 import type {
+  AgentState,
+  CallState,
+  ConnectionState,
   LogLevel,
   LogLine,
   LogPanel,
-  ServiceStatus,
-  SipStatus,
-  WorkStatus,
 } from "./logs";
 
-const DEFAULT_HOST = "https://call-ng.innopaas.com";
-// 与参考页一致：SIP 注册有效期留空按 600 秒，可填 10–3600
+// API 主机：每个客户/环境都不一样，所以代码里没有固定默认值。
+// 交付时可用构建变量按客户注入默认值（不设就留空，用户必须在设置里填）：
+//   VITE_API_HOST=https://<客户的接口网关> npm run build
+function defaultApiHost(): string {
+  return String(import.meta.env.VITE_API_HOST || "").trim();
+}
+// 与参考页一致：SIP 注册有效期留空按 600 秒（新 SDK 目前在适配器里固定 300 秒，这里只作为覆盖项透传）
 const REGISTER_EXPIRES_MIN = 10;
 const REGISTER_EXPIRES_MAX = 3600;
 const REGISTER_EXPIRES_DEFAULT = 600;
 const SETTINGS_KEY = "ccbar.vueDemo.settings";
-// 首通保护：刚注册完的一小段时间内平台可能还没准备好（回 480/Unavailable），
-// 只在签入后的这个窗口里自动重拨，避免被当成「真的打不通」反复打扰。
-const FIRST_CALL_GUARD_MS = 15000;
-// SDK 自己会在失败后 800ms 补拨一次；以下是从「首次失败」起算的兜底重拨时刻（毫秒）。
-// 平台侧首通 480（Q.850 cause=16）通常几秒内自愈，这几个点能尽早接上。
-const CALL_RETRY_DELAYS = [1500, 3000, 6000];
 // 参考页的日志 DOM 不设上限；Vue 里留一个足够大的窗口，避免长会话无限增长
 const LOG_LIMIT = 500;
-
-export type IncomingCall = { callid: string; callerName: string };
-
-// 页面只直接调用这几个方法，其余按钮由 SDK 按 id 自行绑定（与参考页一致）
-type LegacySdk = {
-  // SDK 在构造时就固化了这两个（baseUrl = customUrl || isPre 默认域名），
-  // 设置里改了 API 主机必须在签入前同步，否则账号接口还打老地址。
-  baseUrl?: string;
-  options?: Record<string, unknown>;
-  getToken(fn: () => Promise<{ token: string; expires: number }>): Promise<unknown>;
-  getAccount(): Promise<{ code: number; data?: Record<string, unknown>; message?: string }>;
-  login(config: Record<string, unknown>): void;
-  // 参考 SDK 没有 destroy()，卸载时只能退签
-  signOut?(isLogin?: boolean): void;
-  call(number: string): Promise<void>;
-  answer(sessionId?: string): void;
-  hangup(sessionId?: string): void;
-  setError(message: string): void;
-  clearError(): void;
-  encryptPwd(value: string): string;
-};
-
-declare global {
-  interface Window {
-    CCBarSDK?: new (options: Record<string, unknown>) => LegacySdk;
-    JsSIP?: { debug?: { enable(pattern: string): void; disable?(pattern: string): void } };
-  }
-}
+// 首通保护：刚注册完的短时间内平台可能还没准备好（回 480），只在这个窗口里自动重拨
+const FIRST_CALL_GUARD_MS = 15000;
+const CALL_RETRY_DELAYS = [1500, 3000, 6000];
 
 type SavedSettings = {
   host?: string;
@@ -73,6 +47,7 @@ type SavedSettings = {
   sipWs?: string;
   registerExpires?: number | string;
   sipDebug?: boolean;
+  legacyPlatform?: boolean;
 };
 function loadSettings(): SavedSettings {
   try {
@@ -83,53 +58,38 @@ function loadSettings(): SavedSettings {
   }
 }
 
-function legacyTokenRequest(input: {
-  host: string;
-  extension: string;
-  appKey: string;
-  appSecret: string;
-}) {
-  return fetch("/ccbar/get-token", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  }).then(async (response) => {
-    const result = (await response.json()) as {
-      code?: number;
-      data?: { token?: string; expires?: number };
-      message?: string;
-    };
-    if (!response.ok || result.code !== 0 || !result.data?.token)
-      throw new Error(result.message || `获取 token 失败（HTTP ${response.status}）`);
-    return { token: result.data.token, expires: Number(result.data.expires) || 600 };
-  });
-}
+export type IncomingCall = { callid: string; callerName: string };
 
-function maskWsUrl(url: string): string {
-  return String(url || "").replace(/([?&]token=)[^&]*/gi, "$1***");
-}
+// 旧平台兼容模式的会话来源（SDK 的 sessionProvider 钩子）。
+// 装的是还没有这个钩子的 SDK 版本时类型里不存在，所以本地声明一份；
+// npm 上的版本带上它以后，这里可以直接换成 `import type { SessionProvider } from "@16x/webphone-sdk"`。
+type SessionProvider = {
+  createSession(request: { sdkVersion: string; platform: string }): Promise<unknown>;
+  refreshSession?(sessionId: string): Promise<unknown>;
+  setAgentStatus?(request: { status: string; reason: string }): Promise<void>;
+  invalidateToken?(): void;
+};
 
-// 与参考页 buildSipWsUrl 一致：软电话 WSS 由账号返回的 domain + wssPort 拼出（443 省略端口）
-function buildAccountSipWs(data: Record<string, unknown>): string {
-  const host = String(data.domain || "").trim();
-  if (!host) return "";
-  const port = Number(data.wssPort);
-  return `wss://${host}${port && port !== 443 ? `:${port}` : ""}`;
-}
+// 参考页同款：显示分机时去掉坐席账号里的 customerPrefix（实现见 helpers.ts）
 
-// 设置里填了软电话 WSS 就用填的地址，并照 xcall 坐席条把 token 拼进查询串；留空则按账号域名自动拼。
-function buildSipTarget(data: Record<string, unknown>, token: string, configured: string): string {
-  const base = configured.trim();
-  if (!base) return buildAccountSipWs(data);
-  const url = new URL(base);
-  if (token) url.searchParams.set("token", token);
-  return url.toString();
+// Token 接口地址（与旧 ccbar.js 页面里的 TOKEN_API 一个用法，是页面级常量）：
+//   留空 = 按约定拼：同源 `/get-token`；用 file:// 直接打开页面时拼「API 主机 + /get-token」
+//   填了 = 原样使用，例如 '/your/token/path'、'http://127.0.0.1:3002/get-token'、'https://自己的域名/get-token'
+// 部署时也可以不改代码，用环境变量覆盖：VITE_TOKEN_API=/your/path
+const TOKEN_API = "";
+
+// 可选：WebPhone API 的基地址（可带前缀）。留空＝同源，由 Vite / nginx 把 /webphone/v1/* 转给平台；
+// 平台若挂在别的前缀，除了改了代理重写（WEBPHONE_API_PREFIX），也可以直接配 VITE_WEBPHONE_API_BASE 直连。
+function webphoneBaseUrl(): string {
+  return String(import.meta.env.VITE_WEBPHONE_API_BASE || "")
+    .trim()
+    .replace(/\/+$/, "");
 }
 
 export function usePhone() {
   const saved = loadSettings();
   const config = reactive<{
+    /** API 主机（接口网关）。空字符串表示还没填，签入前会提示 */
     host: string;
     appKey: string;
     appSecret: string;
@@ -137,47 +97,53 @@ export function usePhone() {
     sipWs: string;
     registerExpires: number | string;
     sipDebug: boolean;
+    /** true = 旧平台：token/fs + seat/account/get 取会话（server/get-session.js） */
+    legacyPlatform: boolean;
   }>({
-    host: migrateApiHost(saved.host || "") || DEFAULT_HOST,
+    // 已保存的值优先；没有就用构建时注入的默认值（可能为空）
+    host: migrateApiHost(saved.host || defaultApiHost()),
     appKey: saved.appKey || "",
     appSecret: saved.appSecret || "",
     extension: saved.extension || "1000",
-    // 留空＝按账号返回的 domain 自动拼（参考页做法）；填了就用填入地址（同 xcall 坐席条）
+    // 新 SDK 自己从会话里取 WSS 与注册有效期；这两个字段只作为覆盖项一起发给 Token 服务端
     sipWs: saved.sipWs || "",
     registerExpires: saved.registerExpires ?? REGISTER_EXPIRES_DEFAULT,
-    // 演示亮点：日志面板能看到 REGISTER / INVITE 原文；给客户看时可一键关掉去噪
+    // 演示亮点：打开后能把 JsSIP 原文写进 SIP 面板（见 applySipDebug）
     sipDebug: saved.sipDebug ?? true,
+    // 平台形态也是按客户部署来的：交付时可注入默认值 VITE_LEGACY_PLATFORM=1
+    legacyPlatform: saved.legacyPlatform ?? String(import.meta.env.VITE_LEGACY_PLATFORM || "") === "1",
   });
-  const client = shallowRef<LegacySdk>();
-  const work = ref<WorkStatus>("offline");
-  const service = ref<ServiceStatus>("idle");
-  const sip = ref<SipStatus>("unreg");
-  // 已接通的会话；用于把 SDK 的 calling 拆成「呼出中 / 通话中」
-  const establishedSessions = new Set<string>();
-  const inCall = ref(false);
+
+  const client = shallowRef<CCBarClient>();
+  const connection = ref<ConnectionState | "registered">("offline");
+  const callState = ref<CallState | "idle">("idle");
+  const agent = ref<AgentState>("offline");
   const extension = ref("");
   const number = ref("");
+  const feedback = ref("");
+  const busy = ref("");
   const logs = ref<LogLine[]>([]);
   const incoming = ref<IncomingCall[]>([]);
-  // 与参考页一致：面板为空时显示占位文案，清空后换成「已清空」
   const placeholder = reactive<Record<LogPanel, string>>({
-    flow: "等待签入。签入、取 token、坐席账号会写在这里。",
-    sip: "等待话机登录。SIP / JsSIP 日志会写在这里。",
+    flow: "等待签入。签入、取 Token、坐席账号会写在这里。",
+    sip: "等待话机登录。连接与通话事件会写在这里。",
   });
   let logSequence = 0;
   const consoleMethods = new Map<string, (...args: unknown[]) => void>();
-  let resolveRegistration: (() => void) | undefined;
-  let rejectRegistration: ((error: Error) => void) | undefined;
-  // 首通保护用：注册完成时刻 + 本次外呼的重拨时间线
+  const subscriptions: Array<() => void> = [];
   let registeredAt = 0;
+  // 当前客户端实际用的会话来源（用于判断设置里的平台形态有没有变）
+  let activeLegacy = false;
   let callRetry = { target: "", attempt: 0, timer: 0, startedAt: 0, inFlight: false };
+  let activeCallId = "";
 
-  function appendPanelLog(
-    panel: LogPanel,
-    level: LogLevel,
-    source: string,
-    message: unknown,
-  ) {
+  const connected = computed(
+    () => connection.value === "registered" || connection.value === "connected",
+  );
+  const activeCall = computed(() => client.value?.getActiveCall());
+
+  // ---------- 日志 ----------
+  function appendPanelLog(panel: LogPanel, level: LogLevel, source: string, message: unknown) {
     logs.value = [
       ...logs.value,
       {
@@ -190,7 +156,6 @@ export function usePhone() {
       },
     ].slice(-LOG_LIMIT);
   }
-  // 与参考页 appendFlowLog 一致：来源是 sip / jssip 时改写到 SIP 面板
   function appendFlowLog(level: LogLevel, source: string, message: unknown) {
     appendPanelLog(/^(sip|jssip)$/i.test(source) ? "sip" : "flow", level, source, message);
   }
@@ -198,8 +163,6 @@ export function usePhone() {
     logs.value = logs.value.filter((line) => line.panel !== panel);
     placeholder[panel] = panel === "sip" ? "SIP 日志已清空。" : "日志已清空。";
   }
-
-  // 与参考页 hookConsoleToFlowLog 一致，额外在卸载时还原 console
   function hookConsole() {
     (["log", "info", "warn", "error", "debug"] as const).forEach((method) => {
       const original = console[method].bind(console);
@@ -225,23 +188,45 @@ export function usePhone() {
     consoleMethods.clear();
   }
 
-  // SIP 原文开关：开＝JsSIP debug + console 钩子（日志面板能看到 REGISTER / INVITE），关＝去噪
+  // SDK 没有公开的 SIP 报文接口，JsSIP 的 debug 命名空间是唯一能拿到 REGISTER/INVITE 原文的途径：
+  // debug 包在模块初始化时读 localStorage.debug，所以必须在首次 connect（懒加载 JsSIP）之前设置。
   function applySipDebug() {
     if (config.sipDebug) {
+      try {
+        localStorage.setItem("debug", "JsSIP:*");
+      } catch {
+        /* 隐私模式下写不了 localStorage，忽略 */
+      }
       if (consoleMethods.size === 0) hookConsole();
-      window.JsSIP?.debug?.enable("*");
       return;
     }
+    try {
+      localStorage.removeItem("debug");
+    } catch {
+      /* 同上 */
+    }
     unhookConsole();
-    window.JsSIP?.debug?.disable?.("*");
   }
 
+  // ---------- 错误行 ----------
+  function clearError() {
+    feedback.value = "";
+  }
+  function showError(message: unknown) {
+    const text = stringifyLog(message).trim();
+    if (!text) {
+      clearError();
+      return;
+    }
+    feedback.value = text;
+    appendFlowLog("error", "ccbar", text);
+  }
+
+  // ---------- 设置 ----------
   function saveSettings() {
     const host = validateApiHost(config.host);
-    const sipWs = config.sipWs.trim();
     if (!config.appKey.trim() || !config.appSecret.trim())
       throw new Error("API KEY、API SECRET 均不能为空");
-    // 与参考页一致：留空按 600 秒，填了必须是 10–3600 的整数
     const raw = String(config.registerExpires ?? "").trim();
     const expires = raw ? Number(raw) : REGISTER_EXPIRES_DEFAULT;
     if (
@@ -252,11 +237,18 @@ export function usePhone() {
       throw new Error(
         `SIP 注册有效期须为 ${REGISTER_EXPIRES_MIN}–${REGISTER_EXPIRES_MAX} 的整数，或留空使用默认 ${REGISTER_EXPIRES_DEFAULT} 秒`,
       );
+    const sipWs = config.sipWs.trim();
+    const legacy = Boolean(config.legacyPlatform);
+    const modeChanged = legacy !== activeLegacy;
+    // 会话来源换了就得重建客户端，通话中重建会丢话路，所以先要求挂断签出
+    if (modeChanged && (connected.value || callState.value !== "idle"))
+      throw new Error("切换平台形态前请先挂断通话并签出");
     config.host = host;
     config.extension = config.extension.trim() || "1000";
     config.sipWs = sipWs ? validateSipWs(sipWs) : "";
     config.registerExpires = expires;
     config.sipDebug = Boolean(config.sipDebug);
+    config.legacyPlatform = legacy;
     localStorage.setItem(
       SETTINGS_KEY,
       JSON.stringify({
@@ -265,272 +257,137 @@ export function usePhone() {
         appSecret: config.appSecret.trim(),
       }),
     );
+    if (modeChanged) rebuildClient();
   }
 
-  // 清空错误行（SDK 的 clearError 只管 DOM，不会回抛 onError）
-  function clearError() {
-    if (client.value) client.value.clearError();
-    else {
-      const el = document.getElementById("____ccbar_errori____");
-      if (el) el.textContent = "";
-    }
+  // ---------- Token：SDK 的 tokenProvider ----------
+  // 地址优先级：VITE_TOKEN_API > TOKEN_API 常量 > 按约定拼（同源 /get-token）。
+  // 请求体里的 host/KEY/SECRET 是本地代理模式用的；换成你们自己的签发后端后，只要按同一契约返回
+  // { accessToken, expiresAt?, extension? } 即可，这几项可以留空（就不会再发出去）。
+  function tokenUrl(): string {
+    const configured = String(import.meta.env.VITE_TOKEN_API || TOKEN_API || "").trim();
+    if (configured) return configured;
+    const base = location.protocol === "file:" ? config.host.trim().replace(/\/+$/, "") : "";
+    return `${base}/get-token`;
   }
 
-  // 与参考页 showPageError 一致：错误写进 SDK 的错误行，同时进日志（SDK 会回抛 onError）；
-  // 传入空消息表示清空，不要兜成「请求失败」。
-  function showError(message: unknown) {
-    const text = stringifyLog(message).trim();
-    if (!text) {
-      clearError();
-      return;
-    }
-    if (client.value) client.value.setError(text);
-    else {
-      const el = document.getElementById("____ccbar_errori____");
-      if (el) el.textContent = text;
-      appendFlowLog("error", "ccbar", text);
-    }
-  }
-
-  function createClient() {
-    if (!window.CCBarSDK) throw new Error("旧版 CCBarSDK 未加载，请检查 index.html 的 script");
-    const url = new URL(config.host);
-    const eventHandle = {
-      onRequestError: (type: unknown, data: unknown) =>
-        appendFlowLog("error", "http", `${stringifyLog(type)} ${stringifyLog(data)}`),
-      onError: (message: unknown) => {
-        const text = stringifyLog(message);
-        if (!text) return;
-        appendPanelLog(SIP_ERROR_RE.test(text) ? "sip" : "flow", "error", "ccbar", text);
-      },
-      onRecviceCall: (caller: string, data?: { callid?: string }) => {
-        const callid = data?.callid;
-        appendFlowLog("info", "call", `来电 ${stringifyLog(caller)} ${stringifyLog(data)}`);
-        if (!callid) {
-          appendFlowLog("warn", "call", `来电缺少 callid，无法加入多路列表 ${stringifyLog(data)}`);
-          return;
-        }
-        if (!incoming.value.some((call) => call.callid === callid)) {
-          incoming.value = [
-            ...incoming.value,
-            { callid, callerName: caller || "未知号码" },
-          ];
-        }
-      },
-      onStatusChange: (
-        workStatus: WorkStatus,
-        serviceStatus: ServiceStatus,
-        signin: boolean,
-        sipStatus: SipStatus,
-      ) => {
-        work.value = workStatus;
-        service.value = serviceStatus;
-        sip.value = sipStatus;
-        // SDK 回到 idle 说明没有会话了，会话表跟着清空，避免残留导致状态显示错
-        if (serviceStatus === "idle") {
-          establishedSessions.clear();
-          inCall.value = false;
-        }
-        appendFlowLog(
-          "info",
-          "status",
-          `work=${workStatus} service=${serviceStatus} signin=${signin} sip=${sipStatus}`,
-        );
-      },
-      onWebPhoneHandle: (
-        type: string,
-        data?: { sessionId?: string; error?: unknown; cause?: string },
-      ) => {
-        const failed = Boolean(data?.error);
-        const level: LogLevel =
-          /fail|error/i.test(type) || (type === "ua.disconnected" && failed)
-            ? "error"
-            : type === "reg.registered" ||
-                type === "ua.connected" ||
-                type === "user.signout"
-              ? "ok"
-              : "info";
-        const detail = sipEventDetail(data);
-        appendPanelLog("sip", level, "sip", type + (detail ? ` ${detail}` : ""));
-        if (type === "reg.registered") {
-          registeredAt = Date.now();
-          resolveRegistration?.();
-        }
-        if (type === "reg.failed" || (type === "ua.disconnected" && failed))
-          rejectRegistration?.(new Error("SIP 注册失败"));
-        if (type === "user.signout") {
-          extension.value = "";
-          registeredAt = 0;
-          cancelCallRetry();
-          callRetry.inFlight = false;
-        }
-        const sessionId = data?.sessionId;
-        // 会话接通 / 结束：跟着更新「是否在通话中」（与 fork 版 talking 语义一致）
-        const answered = type === "outgoing.accepted" || type === "incoming.accepted";
-        const finished = /^(outgoing|incoming)\.(ended|failed|cancel)$/.test(type);
-        if (sessionId && answered) establishedSessions.add(sessionId);
-        if (sessionId && finished) establishedSessions.delete(sessionId);
-        if (answered || finished) {
-          inCall.value = establishedSessions.size > 0;
-          if (answered) cancelCallRetry();
-        }
-        // 首通保护：电话有动静就说明在拨了，停掉重拨；失败则按「暂时不可用」排重拨
-        if (
-          type === "outgoing.retry" ||
-          type === "outgoing.progress" ||
-          type === "outgoing.accepted" ||
-          type === "incoming.notify"
-        ) {
-          callRetry.inFlight = true;
-          cancelCallRetry();
-        }
-        if (finished) callRetry.inFlight = false;
-        if (type === "outgoing.failed") scheduleCallRetry(data?.cause);
-        if (
-          sessionId &&
-          (type === "incoming.ended" || type === "incoming.failed" || type === "incoming.accepted")
-        ) {
-          incoming.value = incoming.value.filter((call) => call.callid !== sessionId);
-        }
-      },
+  async function tokenProvider(request?: { extension?: string }) {
+    const extensionValue = request?.extension || config.extension;
+    const response = await fetch(tokenUrl(), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // 最小契约：后端只需这两项（分机通常由服务端登录态决定，不采信浏览器传值）
+        platform: "web",
+        extension: extensionValue,
+        // 本地代理模式才需要的字段；自有后端可以忽略
+        ...(config.host ? { host: config.host } : {}),
+        ...(config.appKey ? { appKey: config.appKey } : {}),
+        ...(config.appSecret ? { appSecret: config.appSecret } : {}),
+        ...(config.sipWs ? { sipWs: config.sipWs } : {}),
+        ...(config.registerExpires ? { registerExpires: Number(config.registerExpires) } : {}),
+      }),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      accessToken?: string;
+      expiresAt?: number;
+      extension?: string;
+      message?: string;
     };
-    client.value = new window.CCBarSDK({
-      customUrl: `${url.host}/openapi/token/v1`,
-      isHttp: url.protocol === "http:",
-      isPre: false,
-      debug: true,
-      useExtraErrorHandle: true,
-      outgoingType: "hand",
-      eventHandle,
+    if (!response.ok || !body.accessToken)
+      throw new Error(body.message || `获取 Token 失败（HTTP ${response.status}）`);
+    return {
+      accessToken: body.accessToken,
+      ...(body.expiresAt ? { expiresAt: body.expiresAt } : {}),
+      ...(body.extension ? { extension: body.extension } : {}),
+    };
+  }
+
+  // ---------- 会话：旧平台（sessionProvider） ----------
+  // 地址与 Token 同规矩：VITE_SESSION_API > 同源 /get-session（file:// 时拼 API 主机）。
+  // 服务端那步见 server/get-session.js：token/fs → seat/account/get → AES 解出 SIP 密码 → 拼会话。
+  function sessionUrl(): string {
+    const configured = String(import.meta.env.VITE_SESSION_API || "").trim();
+    if (configured) return configured;
+    const base = location.protocol === "file:" ? config.host.trim().replace(/\/+$/, "") : "";
+    return `${base}/get-session`;
+  }
+
+  let legacyCustomerPrefix = "";
+
+  async function legacyCreateSession(): Promise<unknown> {
+    appendFlowLog("info", "seat", `开始获取坐席账号 ${sessionUrl()}`);
+    const response = await fetch(sessionUrl(), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        extension: config.extension,
+        // 本地代理模式才需要的字段；
+        // 换成你们自己的后端后，分机和安全凭据都应该由服务端登录态决定
+        ...(config.host ? { host: config.host } : {}),
+        ...(config.appKey ? { appKey: config.appKey } : {}),
+        ...(config.appSecret ? { appSecret: config.appSecret } : {}),
+        ...(config.sipWs ? { sipWs: config.sipWs } : {}),
+        ...(config.registerExpires ? { registerExpires: Number(config.registerExpires) } : {}),
+      }),
     });
-  }
-
-  // 与参考页一致：页面加载完成就建好 SDK，通话按钮由 SDK 按 id 绑定
-  function mount() {
-    applySipDebug();
-    try {
-      createClient();
-    } catch (error) {
-      showError(error);
-      return;
+    const body = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      sip?: { uri?: string };
+      customerPrefix?: string;
+      username?: string;
+    };
+    if (!response.ok || !body.sip?.uri) {
+      throw new Error(body.message || `获取坐席账号失败（HTTP ${response.status}）`);
     }
-    appendFlowLog("info", "app", "页面已就绪");
-  }
-  function unmount() {
-    unhookConsole();
-    cancelCallRetry();
-    try {
-      client.value?.signOut?.();
-    } catch {
-      /* 页面卸载时的退签失败无需处理 */
-    }
-    client.value = undefined;
-  }
-  onMounted(mount);
-  onBeforeUnmount(unmount);
-  // 设置里勾掉/勾上要立刻生效，不用刷新页面
-  watch(() => config.sipDebug, applySipDebug);
-
-  async function signIn() {
-    if (!client.value) throw new Error("CCBarSDK 未就绪，请刷新页面");
-    saveSettings();
-    const instance = client.value;
-    // 让坐席账号等接口跟着「API 主机」走：{API主机}/openapi/token/v1/...
-    const apiUrl = new URL(config.host);
-    instance.baseUrl = `${apiUrl.host}/openapi/token/v1`;
-    if (instance.options) instance.options.isHttp = apiUrl.protocol === "http:";
+    legacyCustomerPrefix = String(body.customerPrefix || "");
     appendFlowLog(
-      "info",
-      "http",
-      `坐席账号接口 ${apiUrl.protocol}//${instance.baseUrl}`,
+      "ok",
+      "seat",
+      `坐席账号就绪 ${stringifyLog({ username: body.username, prefix: body.customerPrefix || "-" })}`,
     );
-    const registration = new Promise<void>((resolve, reject) => {
-      resolveRegistration = resolve;
-      rejectRegistration = reject;
-      window.setTimeout(
-        () => reject(new Error("SIP 注册超时，请检查软电话 WSS 配置")),
-        20000,
-      );
-    });
-    try {
-      const token = await instance.getToken(() =>
-        legacyTokenRequest({
-          host: config.host,
-          extension: config.extension,
-          appKey: config.appKey,
-          appSecret: config.appSecret,
-        }),
-      );
-      const account = await instance.getAccount();
-      if (account.code !== 0 || !account.data)
-        throw new Error(account.message || "获取坐席账号失败");
-      const data = account.data;
-      // 与参考页一致：账号必须带 username/domain（软电话地址留空时由 domain 拼）
-      const username = String(data.username || "").trim();
-      const domain = String(data.domain || "").trim();
-      if (!username || !domain) throw new Error("坐席账号缺少 username/domain，无法连接话机");
-      const accessToken = String((token as { token?: string } | undefined)?.token || "");
-      const wsUrl = buildSipTarget(data, accessToken, config.sipWs);
-      const wsUrlPath = config.sipWs.trim() ? new URL(wsUrl).pathname : "";
-      const wsHost = wsUrl ? new URL(wsUrl).hostname : domain;
-      // 与 xcall 坐席条一致：账号 domain 不是 callapi-ng 时以它为准，否则跟随软电话 WSS 的主机
-      const sipDomain =
-        domain && !/callapi-ng\.innopaas\.com$/i.test(domain) ? domain : wsHost;
-      const customerPrefix = String(data.customerPrefix || "").trim();
-      const registerExpires = Number(config.registerExpires) || REGISTER_EXPIRES_DEFAULT;
-      instance.login({
-        url: domain,
-        sipDomain,
-        wsHost,
-        wsUrl,
-        wsPath: wsUrlPath,
-        username,
-        password: instance.encryptPwd(String(data.password || "")),
-        type: "userinfo",
-        turnPort: data.turnPort,
-        turnIp: data.turnIp,
-        apiKey: data.apiKey,
-        register: true,
-        prefix: customerPrefix,
-        wssPort: data.wssPort,
-        wsPort: data.wsPort,
-        useWss: true,
-        token: accessToken,
-        registerExpires,
-        registerExpries: registerExpires,
-      });
-      // 与参考页一致：坐席条显示账号全号（customerPrefix + 内部分机）
-      extension.value = username;
-      appendFlowLog(
-        "info",
-        "sip",
-        `开始登录话机 username=${username} uri=sip:${username}@${sipDomain} ws=${maskWsUrl(wsUrl)} expires=${registerExpires}`,
-      );
-      appendPanelLog(
-        "sip",
-        "info",
-        "sip",
-        "开始登录话机 " +
-          stringifyLog({
-            uri: `sip:${username}@${sipDomain}`,
-            ws: maskWsUrl(wsUrl),
-            username,
-            registerExpires,
-          }),
-      );
-      await registration;
-    } finally {
-      resolveRegistration = undefined;
-      rejectRegistration = undefined;
-    }
+    return body;
   }
 
-  function cancelCallRetry() {
-    if (callRetry.timer) window.clearTimeout(callRetry.timer);
-    callRetry.timer = 0;
+  const legacySessionProvider: SessionProvider = {
+    createSession: () => legacyCreateSession(),
+    // SDK 刷新会话时（注册有效期将到）重新取一次坐席账号，等价于参考页的换密码逻辑
+    refreshSession: () => legacyCreateSession(),
+  };
+
+  // ---------- 通话状态 ----------
+  function refreshCallState() {
+    const calls = client.value?.getCalls() ?? [];
+    const active = client.value?.getActiveCall();
+    // 来电在接通前不是 active call，所以退回到第一路未结束的通话
+    const target =
+      active ??
+      calls.find((call) => call.state !== "ended" && call.state !== "failed") ??
+      undefined;
+    activeCallId = target?.id ?? "";
+    callState.value = target ? target.state : "idle";
+  }
+  function callById(callId: string): CCBarCall | undefined {
+    return client.value?.getCalls().find((call) => call.id === callId);
+  }
+  function removeIncoming(callId: string) {
+    incoming.value = incoming.value.filter((call) => call.callid !== callId);
   }
 
-  // 排出下一次兜底重拨；时间点从「首次失败」起算，不因中间的失败层层顺延。
+  // 首通保护：平台在注册后首个外呼回 480，签名到就按固定时间点兜底重拨
+  function autoRedial(target: string) {
+    callRetry.target = target;
+    callRetry.attempt = 0;
+    callRetry.startedAt = Date.now();
+    appendFlowLog(
+      "warn",
+      "sip",
+      `呼叫暂时不可用，${CALL_RETRY_DELAYS.map((ms) => `${ms / 1000}s`).join(" / ")} 处自动重拨`,
+    );
+    planNextCallRetry();
+  }
   function planNextCallRetry() {
     const offset = CALL_RETRY_DELAYS[callRetry.attempt];
     if (offset == null) return;
@@ -538,70 +395,297 @@ export function usePhone() {
     callRetry.timer = window.setTimeout(() => {
       callRetry.timer = 0;
       callRetry.attempt += 1;
-      // 已经有呼叫在走（自己的或 SDK 的）就跳过这一次，只保留后面的时间点
       if (callRetry.inFlight) {
         planNextCallRetry();
         return;
       }
-      appendFlowLog(
-        "warn",
-        "sip",
-        `呼叫暂时不可用，自动重拨（第 ${callRetry.attempt} 次）${callRetry.target}`,
-      );
+      appendFlowLog("warn", "sip", `自动重拨（第 ${callRetry.attempt} 次）${callRetry.target}`);
       callRetry.inFlight = true;
-      void client.value?.call(callRetry.target);
+      void dial(callRetry.target).catch(() => undefined);
       planNextCallRetry();
     }, delay);
   }
-
-  // 首通保护：平台在注册刚完成后会对首个 INVITE 回 480（Q.850 cause=16），
-  // 只在签入窗口内兜底重拨，呼叫一起来就停。
-  function scheduleCallRetry(cause: unknown) {
-    if (!callRetry.target || !isTemporarySipFailure(cause)) return;
-    if (Date.now() - registeredAt > FIRST_CALL_GUARD_MS) return;
-    if (callRetry.timer || callRetry.attempt > 0) return; // 时间线已排好，不叠加
-    callRetry.startedAt = Date.now();
-    appendFlowLog(
-      "warn",
-      "sip",
-      `呼叫暂时不可用（${stringifyLog(cause)}），${CALL_RETRY_DELAYS.map((ms) => `${ms / 1000}s`).join(" / ")} 处自动重拨`,
-    );
-    planNextCallRetry();
+  function cancelCallRetry() {
+    if (callRetry.timer) window.clearTimeout(callRetry.timer);
+    callRetry.timer = 0;
   }
 
-  // 与参考页 callPhone 一致：号码校验和「未连接 / 休息状态」提示都在 SDK 里
-  function callNumber() {
+  // ---------- 动作 ----------
+  async function run(name: string, action: () => unknown | Promise<unknown>) {
+    if (busy.value) return;
+    busy.value = name;
+    clearError();
+    try {
+      await action();
+    } catch (error) {
+      // dial/answer/setActiveCall 在未连接时是同步抛错，try/catch 必须包住调用本身
+      showError(error instanceof Error ? error.message : error);
+    } finally {
+      busy.value = "";
+      refreshCallState();
+    }
+  }
+
+  async function signIn() {
+    const instance = client.value;
+    if (!instance) throw new Error("SDK 未就绪，请刷新页面");
+    saveSettings();
+    extension.value = config.extension;
+    appendFlowLog("info", "sip", `开始签入 extension=${config.extension} host=${config.host}`);
+    await instance.connect({ extension: config.extension });
+  }
+
+  async function signOut() {
     cancelCallRetry();
-    const target = number.value;
-    callRetry = { target, attempt: 0, timer: 0, startedAt: 0, inFlight: true };
-    void client.value?.call(target);
+    callRetry.inFlight = false;
+    await client.value?.disconnect();
+    connection.value = "offline";
+    agent.value = "offline";
+    callState.value = "idle";
+    extension.value = "";
+    incoming.value = [];
   }
-  // 与参考页来电浮层的接听 / 拒接一致：操作后即从列表移除
-  function answerCall(callid: string) {
-    client.value?.answer(callid);
-    incoming.value = incoming.value.filter((call) => call.callid !== callid);
+
+  async function dial(destination: string, extensionCall = false) {
+    const instance = client.value;
+    if (!instance) throw new Error("请先签入");
+    cancelCallRetry();
+    callRetry = {
+      target: destination,
+      attempt: 0,
+      timer: 0,
+      startedAt: 0,
+      inFlight: true,
+    };
+    appendFlowLog(
+      "info",
+      "sip",
+      `${extensionCall ? "内呼" : "外呼"} ${destination}${extensionCall ? "（type=extension）" : ""}`,
+    );
+    await instance.dial(
+      extensionCall ? { destination, type: "extension" } : { destination },
+    );
   }
-  function rejectCall(callid: string) {
-    client.value?.hangup(callid);
-    incoming.value = incoming.value.filter((call) => call.callid !== callid);
+
+  async function hangup() {
+    const call = client.value?.getActiveCall() ?? callById(activeCallId);
+    await call?.hangup();
   }
+  async function hold() {
+    await (client.value?.getActiveCall() ?? callById(activeCallId))?.hold();
+  }
+  async function resume() {
+    await (client.value?.getActiveCall() ?? callById(activeCallId))?.resume();
+  }
+  async function transfer(target: string) {
+    const call = client.value?.getActiveCall() ?? callById(activeCallId);
+    if (!call) throw new Error("没有可转接的通话");
+    await call.transfer({ type: "blind", target });
+  }
+  async function answerCall(callId: string) {
+    await client.value?.answer(callId);
+    removeIncoming(callId);
+    // 自动播放被拦时需要在用户手势里手动放一下远端音频
+    void client.value?.media?.playRemoteAudio?.(callId).catch(() => undefined);
+  }
+  async function rejectCall(callId: string) {
+    await callById(callId)?.reject({ reason: "已拒接" });
+    removeIncoming(callId);
+  }
+  async function setAgent(status: "available" | "break") {
+    try {
+      await client.value?.setAgentStatus(status);
+    } catch (error) {
+      // 旧平台没有坐席状态接口：说清楚，而不是把能力错误原样抛给客户
+      if (error && typeof error === "object" && "code" in error && error.code === "CAPABILITY_NOT_SUPPORTED")
+        throw new Error("旧平台模式没有坐席状态接口（服务端按签入/通话自动置忙置闲）");
+      throw error;
+    }
+    agent.value = status;
+  }
+  function setBusyUnsupported() {
+    showError("当前 SDK 只支持 空闲 / 休息，不支持置忙（busy 由通话与服务端策略决定）");
+  }
+
+  // ---------- 生命周期 ----------
+  function subscribe(instance: CCBarClient) {
+    subscriptions.push(
+      instance.on("connection.stateChanged", (event) => {
+        connection.value = event.state;
+        appendFlowLog("info", "status", `connection=${event.state}`);
+      }),
+      instance.on("connection.registered", () => {
+        connection.value = "registered";
+        registeredAt = Date.now();
+        const account = instance.getAgent()?.extension || config.extension;
+        // 旧平台的坐席账号可能带 customerPrefix，显示时去掉（参考页 shortExtension）
+        extension.value = activeLegacy ? shortExtension(account, legacyCustomerPrefix) : account;
+        appendPanelLog("sip", "ok", "sip", "connection.registered");
+      }),
+      instance.on("connection.reconnecting", (event) => {
+        appendFlowLog("warn", "status", `重连中（第 ${event.attempt} 次）`);
+      }),
+      instance.on("connection.failed", (event) => {
+        appendFlowLog("error", "ccbar", event.error.message);
+        showError(event.error.message);
+      }),
+      instance.on("token.expiring", (event) => {
+        appendFlowLog("info", "token", `Token 将过期 expiresAt=${event.expiresAt}`);
+      }),
+      instance.on("token.refreshed", (event) => {
+        appendFlowLog("ok", "token", `Token 已刷新 expiresAt=${event.expiresAt}`);
+      }),
+      instance.on("agent.statusChanged", (event) => {
+        const status = event.status as AgentState;
+        if (status in agentStatus) agent.value = status;
+        appendFlowLog("info", "status", `坐席=${event.status}`);
+      }),
+      instance.on("call.created", (event) => {
+        appendFlowLog("info", "call", `call.created ${sipEventDetail(event)}`);
+        refreshCallState();
+      }),
+      instance.on("call.incoming", (event) => {
+        if (!incoming.value.some((call) => call.callid === event.callId)) {
+          incoming.value = [
+            ...incoming.value,
+            { callid: event.callId, callerName: event.from || "未知号码" },
+          ];
+        }
+        appendFlowLog("info", "call", `来电 ${sipEventDetail(event)}`);
+        refreshCallState();
+      }),
+      instance.on("call.stateChanged", (event) => {
+        const level: LogLevel = event.to === "failed" ? "error" : event.to === "ended" ? "info" : "info";
+        appendPanelLog("sip", level, "call", `call.stateChanged ${sipEventDetail(event)}`);
+        refreshCallState();
+      }),
+      instance.on("call.activeChanged", (event) => {
+        appendFlowLog("info", "call", `call.activeChanged ${sipEventDetail(event)}`);
+        refreshCallState();
+      }),
+      instance.on("call.ended", (event) => {
+        appendFlowLog("info", "call", `呼叫结束 ${sipEventDetail(event)}`);
+        removeIncoming(event.callId);
+        cancelCallRetry();
+        callRetry.inFlight = false;
+        refreshCallState();
+      }),
+      instance.on("call.failed", (event) => {
+        appendFlowLog("error", "call", `呼叫失败 ${sipEventDetail(event)}`);
+        removeIncoming(event.callId);
+        callRetry.inFlight = false;
+        showError(event.error.message);
+        // 首通 480：注册后 15 秒窗口内兜底重拨
+        if (
+          callRetry.target &&
+          isTemporarySipFailure(event.error) &&
+          Date.now() - registeredAt <= FIRST_CALL_GUARD_MS
+        )
+          autoRedial(callRetry.target);
+        refreshCallState();
+      }),
+      instance.on("error", (event) => {
+        appendFlowLog("error", "ccbar", `SDK 错误 ${sipEventDetail(event)}`);
+        showError(event.error.message);
+      }),
+    );
+  }
+
+  function createClient(): CCBarClient {
+    const baseUrl = webphoneBaseUrl();
+    const options: Record<string, unknown> = {
+      locale: "zh-CN",
+      platform: "web",
+      ...(baseUrl ? { baseUrl } : {}),
+      // demo 单标签页，不启用 SharedWorker
+      sharedWorker: { enabled: false, fallback: "single-tab" },
+    };
+    if (config.legacyPlatform) {
+      options.sessionProvider = legacySessionProvider;
+    } else {
+      options.tokenProvider = tokenProvider;
+    }
+    activeLegacy = config.legacyPlatform;
+    try {
+      // sessionProvider 在部分 SDK 版本的类型里还没有，这里按 SDK 的运行时契约传入
+      return new CCBarClient(options as unknown as ConstructorParameters<typeof CCBarClient>[0]);
+    } catch (error) {
+      if (!config.legacyPlatform) throw error;
+      throw new Error(
+        "当前 @16x/webphone-sdk 版本不支持旧平台会话（sessionProvider）：请升级 SDK，" +
+          "本地调试时确认没有用 CCBAR_LOCAL_SDK=0 走 npm 包",
+      );
+    }
+  }
+
+  function mount() {
+    applySipDebug();
+    try {
+      client.value = createClient();
+    } catch (error) {
+      // 例如选了旧平台但当前 SDK 版本还没有 sessionProvider：提示清楚，页面别直接白屏
+      client.value = undefined;
+      showError(error instanceof Error ? error.message : error);
+      return;
+    }
+    subscribe(client.value);
+    appendFlowLog(
+      "info",
+      "app",
+      `页面已就绪，等待签入（会话来源：${activeLegacy ? "旧平台 seat/account/get" : "新平台 webphone/v1"}）`,
+    );
+  }
+
+  // 会话来源只能在构造时决定，所以切换平台形态就重建一个客户端
+  function rebuildClient() {
+    if (!client.value) return;
+    for (const off of subscriptions.splice(0)) off();
+    void client.value.dispose();
+    client.value = undefined;
+    mount();
+  }
+
+  function unmount() {
+    for (const off of subscriptions.splice(0)) off();
+    cancelCallRetry();
+    void client.value?.dispose();
+    client.value = undefined;
+    unhookConsole();
+  }
+  onMounted(mount);
+  onBeforeUnmount(unmount);
+  watch(() => config.sipDebug, applySipDebug);
 
   return {
     config,
-    work,
-    service,
-    sip,
-    inCall,
+    connection,
+    connectionText: connectionStatus,
+    callState,
+    callStatusText: callStatus,
+    agent,
+    agentText: agentStatus,
     extension,
     number,
+    feedback,
+    busy,
     logs,
     incoming,
     placeholder,
+    connected,
+    activeCall,
     saveSettings,
     signIn,
-    callNumber,
+    signOut,
+    dial,
+    hangup,
+    hold,
+    resume,
+    transfer,
     answerCall,
     rejectCall,
+    setAgent,
+    setBusyUnsupported,
+    run,
     clearLog,
     showError,
     clearError,

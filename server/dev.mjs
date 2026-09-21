@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 import { listen, server } from "./token-server.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// 让 Token 代理解析等 node 侧配置也能从 .env 读（Vite 只负责 VITE_ 前缀的那些）
+try {
+  process.loadEnvFile?.(path.join(root, ".env"));
+} catch {
+  /* 没有 .env 就用现有环境变量 */
+}
 const viteBin = path.join(root, "node_modules/vite/bin/vite.js");
 
 const noProxy = new Set(

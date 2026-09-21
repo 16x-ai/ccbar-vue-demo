@@ -1,0 +1,568 @@
+/* 坐席条样式：逐行取自 D:\code\ccbar\index.html 的 <style>（第 103–630 行），与参考页保持一致。 */
+/* Vue 版补充：参考页按钮是 <div>，这里用 <button>，需要复位浏览器的默认字体。 */
+
+:root {
+    --bg: #f3f4f6;
+    --paper: #ffffff;
+    --line: #d9dde3;
+    --ink: #1a1d23;
+    --muted: #5c6370;
+    --label: #8a9099;
+    --blue: #1864ab;
+    --green: #2b8a3e;
+    --green-soft: #e6f4ea;
+    --amber: #c77c02;
+    --amber-soft: #fff4d6;
+    --red: #c92a2a;
+    --red-soft: #fde8e8;
+    --gray: #868e96;
+    --gray-soft: #eef0f2;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+.page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 28px 20px 48px;
+}
+
+.____ccbar____ {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px 22px;
+}
+
+.bar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.bar-head strong {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.bar-head span {
+    color: var(--label);
+    font-size: 12px;
+}
+
+.bar-head-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.bar-head .ext-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: var(--gray-soft);
+    color: var(--ink);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.ext-chip[hidden] { display: none; }
+
+.ext-chip b {
+    margin-left: 4px;
+    font-weight: 600;
+}
+
+.bar-row {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 10px 14px;
+    align-items: center;
+    min-height: 36px;
+}
+
+.bar-row + .bar-row { margin-top: 10px; }
+
+.k {
+    color: var(--label);
+    font-size: 12px;
+}
+
+.chips, .btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.____ccbar____ .ccbar_status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: var(--gray-soft);
+    color: var(--gray);
+}
+
+.____ccbar____ .ccbar_status:empty { display: none; }
+
+.____ccbar____ .ccbar_status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.____ccbar____ .ccbar_work_status_offline,
+.____ccbar____ .ccbar_sip_status_unreg {
+    background: var(--gray-soft);
+    color: var(--gray);
+}
+
+.____ccbar____ .ccbar_work_status_online,
+.____ccbar____ .ccbar_serv_status_idle,
+.____ccbar____ .ccbar_sip_status_reg {
+    background: var(--green-soft);
+    color: var(--green);
+}
+
+.____ccbar____ .ccbar_work_status_busy,
+.____ccbar____ .ccbar_serv_status_busy {
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+.____ccbar____ .ccbar_work_status_reset {
+    background: var(--amber-soft);
+    color: var(--amber);
+}
+
+.____ccbar____ .ccbar_number_input {
+    width: 100%;
+    max-width: 320px;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+}
+
+.____ccbar____ .ccbar_number_input:focus {
+    border-color: var(--blue);
+    outline: none;
+}
+
+.____ccbar____ .ccbar_staff_input {
+    max-width: 160px;
+}
+
+.____ccbar____ .ccbar_staff_input:disabled {
+    background: var(--gray-soft);
+    color: var(--muted);
+}
+
+.____ccbar____ .ccbar_items {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.____ccbar____ .ccbar_items:hover {
+    border-color: #b8c0c9;
+    background: #f8f9fb;
+}
+
+#____ccbar_signin____ {
+    border-color: var(--blue);
+    background: var(--blue);
+    color: #fff;
+}
+
+#____ccbar_signin____:hover { background: #155698; }
+
+#____ccbar_hangup____ {
+    border-color: #f1c0c0;
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+#____ccbar_errori____ {
+    color: var(--red);
+    display: block;
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+#____ccbar_errori____:empty { display: none; }
+
+.log-card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 22px 18px;
+    margin-top: 16px;
+}
+
+.log-tabs {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.log-tabs button {
+    height: 32px;
+    padding: 0 14px;
+    border: 0;
+    background: #fff;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.log-tabs button + button {
+    border-left: 1px solid var(--line);
+}
+
+.log-tabs button:hover {
+    color: var(--ink);
+}
+
+.log-tabs button:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: -2px;
+}
+
+.log-tabs button[aria-selected="true"] {
+    background: var(--ink);
+    color: #fff;
+}
+
+.log-body {
+    max-height: 360px;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--ink);
+    background: #f7f8fa;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+
+.log-body[hidden] { display: none; }
+
+.log-empty {
+    color: var(--label);
+}
+
+.log-line + .log-line {
+    margin-top: 4px;
+}
+
+.log-time {
+    color: var(--label);
+    margin-right: 8px;
+}
+
+.log-src {
+    color: var(--blue);
+    margin-right: 8px;
+}
+
+.log-line.ok .log-msg { color: var(--green); }
+.log-line.warn .log-msg { color: var(--amber); }
+.log-line.error .log-msg { color: var(--red); }
+
+#ccbar-log-clear {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.call-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.call-modal {
+  background-color: white;
+  border-radius: 10px;
+  width: 280px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.call-modal-multi {
+  width: min(360px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.call-modal-multi .call-modal-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 12px;
+  color: #333;
+}
+
+.ccbar-incoming-item {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+
+.ccbar-incoming-item:last-child {
+  margin-bottom: 0;
+}
+
+.ccbar-incoming-item .caller-name {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.caller-info {
+  margin-bottom: 20px;
+}
+
+.caller-name {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.caller-number {
+  color: #666;
+  font-size: 16px;
+}
+
+.button-container {
+  display: flex;
+  justify-content: space-around;
+}
+
+.call-button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.answer-button {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.answer-button:hover {
+  background-color: #45a049;
+}
+
+.cancel-button {
+  background-color: #f44336;
+  color: white;
+}
+
+.cancel-button:hover {
+  background-color: #d32f2f;
+}
+
+.disabled-button {
+  background-color: #ccc !important;
+  color: #666 !important;
+  cursor: not-allowed !important;
+  /* pointer-events: none !important; */
+  opacity: 0.6 !important;
+  user-select: none !important; /* 禁止文字选择 */
+
+  /* 如果是链接，移除下划线 */
+  text-decoration: none !important;
+}
+
+#ccbar-settings-btn {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+#ccbar-settings-btn:hover {
+    border-color: #b8c0c9;
+    background: #f8f9fb;
+}
+
+#ccbar-settings-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 2100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+#ccbar-settings-mask[hidden] {
+    display: none;
+}
+
+.ccbar-settings-dialog {
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    padding: 20px 22px 16px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.ccbar-settings-dialog h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    color: #333;
+}
+
+.ccbar-settings-dialog label {
+    display: block;
+    margin: 10px 0 6px;
+    font-size: 13px;
+    color: #555;
+}
+
+.ccbar-settings-dialog input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #d9d9d9;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.ccbar-settings-dialog input:focus {
+    border-color: #1890ff;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.ccbar-settings-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #8a9099;
+    line-height: 1.5;
+}
+
+.ccbar-settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.ccbar-settings-actions button {
+    min-width: 72px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+#ccbar-settings-cancel {
+    border: 1px solid #d9d9d9;
+    background: #fff;
+    color: #333;
+}
+
+#ccbar-settings-save {
+    border: 1px solid var(--blue);
+    background: var(--blue);
+    color: #fff;
+}
+
+button.ccbar_items,
+#ccbar-settings-btn,
+#ccbar-log-clear,
+.log-tabs button,
+.ccbar-settings-actions button,
+.call-button {
+    font-family: inherit;
+}
+
+/* Vue 版补充：参考页设置框没有复选框，复位一下（否则会套上文本框的 100% 宽度） */
+.ccbar-settings-dialog label.ccbar-settings-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    line-height: 1.45;
+}
+
+.ccbar-settings-dialog input[type="checkbox"] {
+    width: auto;
+    margin: 2px 0 0;
+    padding: 0;
+    flex: none;
+}
+
+/* Vue 版补充：参考页 CSS 缺这三条，按 fork 版的语义配色 */
+/* 呼出中（未接通）与振铃中同色 */
+.____ccbar____ .ccbar_serv_status_calling {
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+/* 通话中（已接通） */
+.____ccbar____ .ccbar_serv_status_talking {
+    background: var(--green-soft);
+    color: var(--green);
+}

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CC Bar Vue 嵌入示例</title>
+    <!--
+      软电话 SDK：取自参考项目 D:\code\ccbar（public/ 下是逐字节相同的副本），
+      加载顺序与参考页一致。Vue 页面通过 window.CCBarSDK 调用。
+    -->
+    <script src="./ccbar.js" type="text/javascript"></script>
+    <script src="./crypto.js" type="text/javascript"></script>
+    <script src="./message.js" type="text/javascript"></script>
+    <script src="./jssip-3.4.4.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

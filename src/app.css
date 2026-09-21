@@ -539,21 +539,6 @@ button.ccbar_items,
     font-family: inherit;
 }
 
-/* Vue 版补充：参考页设置框没有复选框，复位一下（否则会套上文本框的 100% 宽度） */
-.ccbar-settings-dialog label.ccbar-settings-check {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
-    line-height: 1.45;
-}
-
-.ccbar-settings-dialog input[type="checkbox"] {
-    width: auto;
-    margin: 2px 0 0;
-    padding: 0;
-    flex: none;
-}
-
 /* Vue 版补充：参考页 CSS 缺这三条，按 fork 版的语义配色 */
 /* 呼出中（未接通）与振铃中同色 */
 .____ccbar____ .ccbar_serv_status_calling {

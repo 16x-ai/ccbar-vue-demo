@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parse, compileScript, compileTemplate } from "@vue/compiler-sfc";
 
-for (const filename of ["src/App.vue"]) {
+const components = [
+  "src/App.vue",
+  "src/components/SettingsDialog.vue",
+  "src/components/LogPanel.vue",
+  "src/components/IncomingCallModal.vue",
+];
+
+for (const filename of components) {
   test(`${filename} 的 Vue 脚本与模板可编译`, () => {
     const source = readFileSync(
       new URL(`../${filename}`, import.meta.url),

@@ -9,7 +9,7 @@
 | 外呼 / 内呼 | `client.dial({ destination })` / `client.dial({ destination, type: 'extension' })` |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })`（来电在接通前不是 active call，靠 `call.incoming` 的 callId 定位） |
-| 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')`；旧平台形态没有这个接口，点击提示「旧平台模式没有坐席状态接口」 |
+| 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')`；默认形态（旧平台）没有这个接口，点击提示「旧平台模式没有坐席状态接口」 |
 | 置忙 | 新 SDK 无 busy（`setBu()` 已废弃），按钮保留但点击提示不支持 |
 
 `dial` / `answer` / `setActiveCall` 在未连接时**同步抛错**，调用点必须 `try/catch`。按钮统一带 busy / 连接 / 号码条件禁用。
@@ -36,4 +36,4 @@
 
 ## 设置
 
-API 主机、API KEY、API SECRET、内部分机（必填），软电话 WSS（覆盖项，可留空：SDK 从会话取 WSS）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`），**旧平台形态**（勾上＝会话改由服务端 `/get-session` 拼：`token/fs` + `seat/account/get` + AES 解密码，见 README）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和 Token 请求体，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。切换平台形态会重建客户端，通话中或已签入时保存会被拒绝（先挂断签出）。无 alert/confirm。
+API 主机、API KEY、API SECRET、内部分机、软电话 WSS（都必填；WSS 需 `wss://` 开头）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和会话请求体里，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。会话形态（默认旧平台 `token/fs` + `seat/account/get`，见 README）由构建变量 `VITE_LEGACY_PLATFORM` 决定，页面里不切换。无 alert/confirm。

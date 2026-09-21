@@ -2,6 +2,7 @@ import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { getWebPhoneToken } from "./get-token.js";
 import { getLegacySession } from "./get-session.js";
+import { setSeatStatus } from "./set-agent-status.js";
 
 const BIND = process.env.CCBAR_BIND || "127.0.0.1";
 const MAX_BODY = 64 * 1024;
@@ -17,6 +18,9 @@ const TOKEN_PATHS = new Set([
 
 // 旧平台：走 token/fs + seat/account/get，由服务端拼出 SDK 能用的会话
 const SESSION_PATHS = new Set(["/get-session", "/ccbar/get-session"]);
+
+// 设置坐席状态（空闲 / 置忙 / 休息 / 退签）→ 平台的 seats/set-status
+const AGENT_STATUS_PATHS = new Set(["/set-agent-status", "/ccbar/set-agent-status"]);
 
 function corsHeaders(req) {
   const origin = req?.headers?.origin || "";
@@ -118,6 +122,27 @@ export const server = http.createServer(async (req, res) => {
         sipWs: body.sipWs,
         registerExpires: body.registerExpires,
       }));
+    } catch (error) {
+      sendJson(req, res, 500, { code: -1, message: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && AGENT_STATUS_PATHS.has(urlPath)) {
+    try {
+      const body = await readBody(req, MAX_BODY);
+      requireGatewayConfig(body);
+      sendJson(req, res, 200, {
+        code: 0,
+        data: await setSeatStatus({
+          host: body.host,
+          appKey: body.appKey,
+          appSecret: body.appSecret,
+          extension: body.extension,
+          status: body.status,
+          reason: body.reason,
+        }),
+      });
     } catch (error) {
       sendJson(req, res, 500, { code: -1, message: error.message });
     }

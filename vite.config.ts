@@ -6,8 +6,15 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig, loadEnv, searchForWorkspaceRoot, type Plugin } from "vite";
 
 function tokenProxyPlugin(tokenOrigin: string): Plugin {
-  // /get-token：新平台会话 token；/get-session：旧平台会话（坐席账号 + SIP 密码）
-  const prefixes = ["/api/xcall/webphone-token", "/ccbar/", "/get-token", "/get-session"];
+  // /get-session：会话（坐席账号 + SIP 密码）；/set-agent-status：坐席状态；
+  // /get-token：新平台会话 token（只有切到新平台形态时用得到）
+  const prefixes = [
+    "/api/xcall/webphone-token",
+    "/ccbar/",
+    "/get-token",
+    "/get-session",
+    "/set-agent-status",
+  ];
   return {
     name: "ccbar-token-proxy",
     configureServer(server) {

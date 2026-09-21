@@ -17,8 +17,8 @@ export type CallState =
   | "held"
   | "ended"
   | "failed";
-// SDK：setAgentStatus 的取值
-export type AgentState = "available" | "break" | "offline";
+// SDK：setAgentStatus 的取值；busy 由页面自己调平台的坐席状态接口得到（SDK 没有这个取值）
+export type AgentState = "available" | "break" | "busy" | "offline";
 
 // 与参考页 hookConsoleToFlowLog 一致：只有命中这些关键字的 console 输出才进 SIP 面板
 export const SIP_LOG_RE = /JsSIP|WebSocket|Registration|registrar|sip:|UA\[|transport|WebPhone/i;
@@ -36,6 +36,7 @@ export type LogLine = {
 export const agentStatus: Record<AgentState, { text: string; tone: string }> = {
   available: { text: "在线", tone: "online" },
   break: { text: "休息", tone: "reset" },
+  busy: { text: "忙碌", tone: "busy" },
   offline: { text: "离线", tone: "offline" },
 };
 

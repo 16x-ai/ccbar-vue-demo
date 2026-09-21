@@ -22,8 +22,12 @@ export function validateApiHost(value: string): string {
   throw new Error("请填写 API 主机（接口网关地址，需以 http:// 或 https:// 开头）。");
 }
 
+// 软电话地址是必填项：它决定了话机连哪里，留空只会让签入在更晚的地方失败
 export function validateSipWs(value: string): string {
   const text = value.trim();
+  if (!text) {
+    throw new Error("请填写软电话 WSS（wss:// 开头，例如 wss://你们的域名/api/fs/sip-ws）");
+  }
   try {
     const url = new URL(text);
     if (url.protocol === "wss:" || url.protocol === "ws:") return text;

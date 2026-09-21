@@ -29,6 +29,16 @@ test("API 主机和软电话 WSS 校验与旧坐席条一致", () => {
   assert.throws(() => validateSipWs("call-ng.innopaas.com"), /软电话/);
 });
 
+test("软电话 WSS 是必填项，且必须是 ws/wss 地址", () => {
+  assert.throws(() => validateSipWs(""), /请填写软电话 WSS/);
+  assert.throws(() => validateSipWs("   "), /请填写软电话 WSS/);
+  assert.throws(() => validateSipWs("sip.example.test"), /软电话 WSS/);
+  assert.equal(
+    validateSipWs("  wss://sip.example.test/api/fs/sip-ws  "),
+    "wss://sip.example.test/api/fs/sip-ws",
+  );
+});
+
 test("显示分机去掉 customerPrefix（与参考页 shortExtension 一致）", () => {
   assert.equal(shortExtension("p8001", "p"), "8001");
   assert.equal(shortExtension("8001", "p"), "8001");

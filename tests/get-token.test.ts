@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   assertAllowedTokenHost,
+  getFsToken,
   getWebPhoneToken,
   formatTokenError,
   hmacSha256,
@@ -99,3 +100,31 @@ test("透传后端 token 错误信息", () => {
 });
 
 
+
+test("fs token 缓存只活 2 分钟：不能拿 18 小时前的旧票去换坐席账号", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let tokenCalls = 0;
+  globalThis.fetch = (async () => {
+    tokenCalls += 1;
+    return new Response(
+      JSON.stringify({ code: 0, data: { token: `t${tokenCalls}`, expires: 64800 } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  const params = { extension: "8001", host: "https://api.example.test", appKey: "k", appSecret: "s" };
+  try {
+    t.mock.timers.enable({ apis: ["Date"], now: 1_700_000_000_000 });
+    // 同一时刻连着两次 → 命中缓存，只取一次票
+    assert.equal((await getFsToken(params)).data.token, "t1");
+    assert.equal((await getFsToken(params)).data.token, "t1");
+    assert.equal(tokenCalls, 1);
+
+    // 过了缓存寿命（2 分钟）→ 重新取票；否则 18 小时的票会把过期密码一直带下去
+    t.mock.timers.tick(3 * 60_000);
+    assert.equal((await getFsToken(params)).data.token, "t2");
+    assert.equal(tokenCalls, 2);
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+  }
+});

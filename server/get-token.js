@@ -166,8 +166,12 @@ export function formatTokenError(apiUrl, httpStatus, result) {
   return `HTTP ${httpStatus}`;
 }
 
-// fs token 缓存：参考实现（ccbar.js）是一次签入用同一张票、按有效期换新的，
-// 不是每次调用都重新签。这里做同样的事，顺带减少平台的 token 请求量。
+// fs token 缓存：只用来省掉「同一时刻连着几次调用」的重复取票（例如点空闲/置忙/休息）。
+//
+// 注意不能按 token 的 expires 缓存：这个平台的 expires 是 64800 秒（18 小时），
+// 而 SIP 密码票只有 600 秒。拿一张很久以前的票去换坐席账号，换回来的密码可能已经不是
+// 当前那张 → REGISTER 会被 kamailio 反复 401。参考实现是每次刷新周期都重新取票，所以它不会碰到。
+const FS_TOKEN_CACHE_MS = 120_000;
 const fsTokenCache = new Map();
 
 function expiresToMs(value) {
@@ -182,15 +186,15 @@ function expiresToMs(value) {
 export async function getFsToken({ extension, host, appKey, appSecret } = {}) {
   const key = `${host}|${extension}|${appKey}`;
   const cached = fsTokenCache.get(key);
-  // 提前 2 分钟换新，避免贴着过期用
-  if (cached && cached.expiresAt - Date.now() > 120_000) {
+  if (cached && cached.expiresAt - Date.now() > 5_000) {
     return { code: 0, data: { token: cached.token, expires: cached.expires } };
   }
   const result = await getToken({ isPublic: true, extension, host, appKey, appSecret });
   const token = String(result?.data?.token || "");
   const expires = Number(result?.data?.expires) || 0;
   if (token) {
-    fsTokenCache.set(key, { token, expires, expiresAt: Date.now() + expiresToMs(expires) });
+    const ttl = Math.min(expiresToMs(expires), FS_TOKEN_CACHE_MS);
+    fsTokenCache.set(key, { token, expires, expiresAt: Date.now() + ttl });
   }
   return result;
 }

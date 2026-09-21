@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
-import type { CCBarCall } from "@16x/webphone-sdk";
+import type { CCBarCall, CCBarClientOptions, SessionProvider, WebPhoneSession } from "@16x/webphone-sdk";
 import { migrateApiHost, shortExtension, validateApiHost, validateSipWs } from "./helpers";
 import {
   SIP_LOG_RE,
@@ -61,16 +61,7 @@ function loadSettings(): SavedSettings {
 
 export type IncomingCall = { callid: string; callerName: string };
 
-// 旧平台兼容模式的会话来源（SDK 的 sessionProvider 钩子）。
-// 装的是还没有这个钩子的 SDK 版本时类型里不存在，所以本地声明一份；
-// npm 上的版本带上它以后，这里可以直接换成 `import type { SessionProvider } from "@16x/webphone-sdk"`。
-type SessionProvider = {
-  createSession(request: { sdkVersion: string; platform: string }): Promise<unknown>;
-  refreshSession?(sessionId: string): Promise<unknown>;
-  setAgentStatus?(request: { status: string; reason: string }): Promise<void>;
-  invalidateToken?(): void;
-};
-
+// 旧平台兼容模式的会话来源用 SDK 的 sessionProvider（@16x/webphone-sdk 3.1.0 起）
 // 参考页同款：显示分机时去掉坐席账号里的 customerPrefix（实现见 helpers.ts）
 
 // Token 接口地址（与旧 ccbar.js 页面里的 TOKEN_API 一个用法，是页面级常量）：
@@ -317,7 +308,7 @@ export function usePhone() {
 
   let legacyCustomerPrefix = "";
 
-  async function legacyCreateSession(): Promise<unknown> {
+  async function legacyCreateSession(): Promise<WebPhoneSession> {
     appendFlowLog("info", "seat", `开始获取坐席账号 ${sessionUrl()}`);
     const response = await fetch(sessionUrl(), {
       method: "POST",
@@ -334,9 +325,10 @@ export function usePhone() {
         ...(config.registerExpires ? { registerExpires: Number(config.registerExpires) } : {}),
       }),
     });
-    const body = (await response.json().catch(() => ({}))) as {
+    // 会话由我们自己的 /get-session 拼好（server/get-session.js），这里只做最小校验：
+    // 有 sip.uri 才算拿到了会话；customerPrefix / username 是服务端额外给页面显示用的字段
+    const body = (await response.json().catch(() => ({}))) as Partial<WebPhoneSession> & {
       message?: string;
-      sip?: { uri?: string };
       customerPrefix?: string;
       username?: string;
     };
@@ -349,7 +341,7 @@ export function usePhone() {
       "seat",
       `坐席账号就绪 ${stringifyLog({ username: body.username, prefix: body.customerPrefix || "-" })}`,
     );
-    return body;
+    return body as WebPhoneSession;
   }
 
   const legacySessionProvider: SessionProvider = {
@@ -594,27 +586,24 @@ export function usePhone() {
 
   function createClient(): CCBarClient {
     const baseUrl = webphoneBaseUrl();
-    const options: Record<string, unknown> = {
+    const options: CCBarClientOptions = {
       locale: "zh-CN",
       platform: "web",
       ...(baseUrl ? { baseUrl } : {}),
       // demo 单标签页，不启用 SharedWorker
       sharedWorker: { enabled: false, fallback: "single-tab" },
     };
-    if (config.legacyPlatform) {
-      options.sessionProvider = legacySessionProvider;
-    } else {
-      options.tokenProvider = tokenProvider;
-    }
     activeLegacy = config.legacyPlatform;
     try {
-      // sessionProvider 在部分 SDK 版本的类型里还没有，这里按 SDK 的运行时契约传入
-      return new CCBarClient(options as unknown as ConstructorParameters<typeof CCBarClient>[0]);
+      // 会话来源二选一：新平台给 tokenProvider，旧平台给 sessionProvider（SDK 3.1.0 起）
+      return config.legacyPlatform
+        ? new CCBarClient({ ...options, sessionProvider: legacySessionProvider })
+        : new CCBarClient({ ...options, tokenProvider });
     } catch (error) {
       if (!config.legacyPlatform) throw error;
       throw new Error(
-        "当前 @16x/webphone-sdk 版本不支持旧平台会话（sessionProvider）：请升级 SDK，" +
-          "本地调试时确认没有用 CCBAR_LOCAL_SDK=0 走 npm 包",
+        "当前 @16x/webphone-sdk 版本不支持旧平台会话（sessionProvider）：请升级到 3.1.0 以上。" +
+          `（原始错误：${error instanceof Error ? error.message : String(error)}）`,
       );
     }
   }

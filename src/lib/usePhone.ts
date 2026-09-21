@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions, SessionProvider, WebPhoneSession } from "@16x/webphone-sdk";
 import { migrateApiHost, shortExtension, validateApiHost, validateSipWs } from "./helpers";
@@ -47,7 +47,6 @@ type SavedSettings = {
   appSecret?: string;
   sipWs?: string;
   registerExpires?: number | string;
-  sipDebug?: boolean;
   legacyPlatform?: boolean;
 };
 function loadSettings(): SavedSettings {
@@ -88,7 +87,6 @@ export function usePhone() {
     extension: string;
     sipWs: string;
     registerExpires: number | string;
-    sipDebug: boolean;
     /** true = 旧平台：token/fs + seat/account/get 取会话（server/get-session.js） */
     legacyPlatform: boolean;
   }>({
@@ -100,8 +98,6 @@ export function usePhone() {
     // 新 SDK 自己从会话里取 WSS 与注册有效期；这两个字段只作为覆盖项一起发给 Token 服务端
     sipWs: saved.sipWs || "",
     registerExpires: saved.registerExpires ?? REGISTER_EXPIRES_DEFAULT,
-    // 演示亮点：打开后能把 JsSIP 原文写进 SIP 面板（见 applySipDebug）
-    sipDebug: saved.sipDebug ?? true,
     // 平台形态也是按客户部署来的：交付时可注入默认值 VITE_LEGACY_PLATFORM=1
     legacyPlatform: saved.legacyPlatform ?? String(import.meta.env.VITE_LEGACY_PLATFORM || "") === "1",
   });
@@ -180,24 +176,16 @@ export function usePhone() {
     consoleMethods.clear();
   }
 
-  // SDK 没有公开的 SIP 报文接口，JsSIP 的 debug 命名空间是唯一能拿到 REGISTER/INVITE 原文的途径：
-  // debug 包在模块初始化时读 localStorage.debug，所以必须在首次 connect（懒加载 JsSIP）之前设置。
-  function applySipDebug() {
-    if (config.sipDebug) {
-      try {
-        localStorage.setItem("debug", "JsSIP:*");
-      } catch {
-        /* 隐私模式下写不了 localStorage，忽略 */
-      }
-      if (consoleMethods.size === 0) hookConsole();
-      return;
-    }
+  // SDK 没有公开的 SIP 报文接口，JsSIP 的 debug 命名空间是唯一能拿到 REGISTER/INVITE 原文的途径。
+  // 演示页面固定开启（不再做成设置项）：debug 包在模块初始化时读 localStorage.debug，
+  // 所以必须在首次 connect（懒加载 JsSIP）之前设置 —— 也就是 mount 里第一时间调用。
+  function enableSipDebug() {
     try {
-      localStorage.removeItem("debug");
+      localStorage.setItem("debug", "JsSIP:*");
     } catch {
-      /* 同上 */
+      /* 隐私模式下写不了 localStorage，忽略 */
     }
-    unhookConsole();
+    if (consoleMethods.size === 0) hookConsole();
   }
 
   // ---------- 错误行 ----------
@@ -239,7 +227,6 @@ export function usePhone() {
     config.extension = config.extension.trim() || "1000";
     config.sipWs = sipWs ? validateSipWs(sipWs) : "";
     config.registerExpires = expires;
-    config.sipDebug = Boolean(config.sipDebug);
     config.legacyPlatform = legacy;
     localStorage.setItem(
       SETTINGS_KEY,
@@ -609,7 +596,8 @@ export function usePhone() {
   }
 
   function mount() {
-    applySipDebug();
+    // 必须在 SDK 首次 connect（懒加载 JsSIP）之前打开 SIP 原文
+    enableSipDebug();
     try {
       client.value = createClient();
     } catch (error) {
@@ -644,7 +632,6 @@ export function usePhone() {
   }
   onMounted(mount);
   onBeforeUnmount(unmount);
-  watch(() => config.sipDebug, applySipDebug);
 
   return {
     config,

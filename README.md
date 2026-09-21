@@ -56,8 +56,8 @@ SDK 从会话里取 WSS，所以**页面不需要填软电话 WSS**（设置里�
 3. AES-128-CBC/Pkcs7 解出 SIP 密码（密钥只在服务端）→ 拼 `wss://…/api/fs/sip-ws?token=…`
 4. 返回 SDK 的 `WebPhoneSession`，页面用 SDK 的 `sessionProvider` 交给 SDK
 
-这样页面不碰 AES 密钥，也不依赖网关的 CORS 配置。SDK 侧对应 3.1.0 新增的 `sessionProvider` 钩子
-（`/api/webphone-token`、`sessionProvider` 都不需要平台改造）。相关环境变量：
+这样页面不碰 AES 密钥，也不依赖网关的 CORS 配置。SDK 侧对应 3.1.0 新增的 `sessionProvider` 钩子，
+用这个模式不需要平台做任何改造。相关环境变量：
 
 | 变量 | 作用 |
 |---|---|
@@ -99,9 +99,11 @@ dev 环境用 `.env` 里的 `WEBPHONE_PROXY_TARGET` 配；线上用 nginx 做同
 
 平台在**每次注册完成后的首个外呼**会回 `480 Temporarily Unavailable`（带 `Reason: Q.850;cause=16;text="NORMAL_CLEARING"`，即对端振铃前被正常清除），几秒内自愈。页面在签入后 15 秒窗口内遇到这类暂时性失败（`call.failed` 且错误里含 480 / 超时 / 网络类）会自动重拨 1.5s / 3s / 6s 各一次，呼叫一起来就停。**根因在平台侧**，要彻底解决需平台方查同一次签入里失败/成功两条 INVITE 的 Call-ID。
 
-## SIP 原文开关
+## SIP 原文
 
-页面默认打开 JsSIP 的调试命名空间（`localStorage.debug = 'JsSIP:*'`），日志面板的 **SIP 页**因此能看到 REGISTER / INVITE 原文。这是 SDK **未公开**的调试能力（SDK 没暴露 SIP 报文接口，官方途径是 `client.getDiagnostics()`，只有生命周期日志）。设置里可关掉去噪；**改完要重新签入才生效**（JsSIP 在首次连接时懒加载，debug 开关在那之前读一次）。
+页面**固定**打开 JsSIP 的调试命名空间（`localStorage.debug = 'JsSIP:*'`），日志面板的 **SIP 页**因此能看到 REGISTER / INVITE 原文。这是 SDK **未公开**的调试能力（SDK 没暴露 SIP 报文接口，官方途径是 `client.getDiagnostics()`，只有生命周期日志），演示页面不再提供开关：要在页面里排障就一定要有原文。
+
+`enableSipDebug()` 在 `onMounted` 里第一时间执行 —— JsSIP 是首次 `connect()` 时懒加载的，debug 包在模块初始化时读一次 `localStorage.debug`，**晚于那一刻设置就不生效**（这也是为什么它不能做成「保存后再生效」的设置项）。
 
 ## SDK 来源与回退
 

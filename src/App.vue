@@ -291,17 +291,13 @@ function saveSettings() {
           <input id="ccbar-setting-legacy" v-model="phone.config.legacyPlatform" type="checkbox" />
           旧平台形态（token/fs + seat/account/get 取会话；不勾＝走新平台 /webphone/v1）
         </label>
-        <label for="ccbar-setting-debug" class="ccbar-settings-check">
-          <input id="ccbar-setting-debug" v-model="phone.config.sipDebug" type="checkbox" />
-          记录 SIP 原文（JsSIP 调试：SIP 面板能看到 REGISTER / INVITE；改完下次签入生效）
-        </label>
         <p class="ccbar-settings-hint">
           Token 请求打同源的 <code>/get-token</code>（与 xcall 坐席条一致）：dev 由 Vite 转给本地代理加签，
           线上把同一路径反代到你们的签发服务即可 —— 只要返回 <code>{ accessToken, expiresAt? }</code>，
           KEY / SECRET 就可以只在服务端。WSS 由 SDK 从会话的 <code>transport.wssUrl</code> 取；
           注册有效期按这里填的值走（服务端写进会话的 <code>sip.registerExpires</code>，留空默认 600，
-          SDK 拿不到时才回退 300）。SIP 原文走 JsSIP 的
-          debug 命名空间，属于 SDK 未公开的调试能力，演示时可用。<br />
+          SDK 拿不到时才回退 300）。SIP 原文固定记录（JsSIP 的 debug 命名空间，SDK 未公开的调试能力），
+          SIP 面板能看到 REGISTER / INVITE。<br />
           勾了「旧平台形态」时改打 <code>/get-session</code>（
           <code>server/get-session.js</code>）：服务端取 fs token → 坐席账号 → 解出 SIP 密码 →
           拼好会话给 SDK，页面不碰 AES 密钥，也不依赖网关的跨域配置。

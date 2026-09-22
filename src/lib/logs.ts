@@ -143,12 +143,47 @@ export function timeStamp(date = new Date()): string {
 }
 
 // 首通保护用：判断这个失败值不值得再拨一次。
-// 旧平台在注册后首个外呼回 480（Q.850 cause=16），新 SDK 把它包成 CCBarError，
-// 所以既看 code/category，也看 status/serverCode/message。
+// 旧平台在注册后首个外呼回 480（Q.850 cause=16），新 SDK 把它包成 CCBarError。
+//
+// 坑（踩过一次）：CCBarError 的 message 就是错误码（`super(code)`），
+// 真正的原因藏在 error.cause 里：
+//   cause = { originator:'remote', message:{ status_code:480, reason_phrase:'Temporarily Unavailable', data:'<SIP 原文>' }, cause:'Unavailable' }
+// 所以只看 message 的话永远匹配不上（"CALL_OPERATION_NOT_ALLOWED" 里既没有 480 也没有 unavailable），
+// 首通保护会静默失效。这里改成把 cause 链一起挖出来找关键字。
 export function isTemporarySipFailure(value: unknown): boolean {
-  const text = stringifyLog(value).toLowerCase();
+  const text = errorSearchText(value).toLowerCase();
   if (!text) return false;
   return /480|temporarily unavailable|unavailable|request timeout|408|sip_ws_unavailable|network/.test(
     text,
   );
+}
+
+/**
+ * 把错误对象里可能有排障信息的字段拼成一段文本（最多挖 4 层，避免自引用成环）。
+ * 认两种形状：JsSIP 的异常（Error + name/message）和它的通话失败对象（message/status_code/cause）。
+ */
+function errorSearchText(value: unknown, depth = 0): string {
+  if (value == null || depth > 3) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Error) {
+    return `${value.message} ${errorSearchText((value as { cause?: unknown }).cause, depth + 1)}`;
+  }
+  if (typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of [
+    "message",
+    "status_code",
+    "reason_phrase",
+    "reason",
+    "cause",
+    "code",
+    "status",
+    "serverCode",
+    "data",
+  ]) {
+    if (key in record) parts.push(errorSearchText(record[key], depth + 1));
+  }
+  return parts.join(" ");
 }

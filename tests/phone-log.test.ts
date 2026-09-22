@@ -46,6 +46,38 @@ test("只有暂时性失败（480 / 超时 / 网络）才值得重拨", () => {
   assert.equal(isTemporarySipFailure(undefined), false);
 });
 
+test("首通保护认得 CCBarError 的真实形状：480 藏在 cause 里，message 只有错误码", () => {
+  // 形状来自 SDK：CCBarError 的 message 就是 code，真正的原因在 cause 上
+  const remote480 = Object.assign(new Error("CALL_OPERATION_NOT_ALLOWED"), {
+    code: "CALL_OPERATION_NOT_ALLOWED",
+    retryable: false,
+    cause: {
+      originator: "remote",
+      message: {
+        status_code: 480,
+        reason_phrase: "Temporarily Unavailable",
+        data: 'SIP/2.0 480 Temporarily Unavailable\r\nReason: Q.850;cause=16;text="NORMAL_CLEARING"\r\n',
+      },
+      cause: "Unavailable",
+    },
+  });
+  assert.equal(isTemporarySipFailure(remote480), true, "只传给 SDK 的 error 对象也应该认出来");
+
+  // 真失败不能被误判成暂时性失败，否则会对错误号码反复重拨
+  const remote403 = Object.assign(new Error("CALL_OPERATION_NOT_ALLOWED"), {
+    cause: {
+      originator: "remote",
+      message: { status_code: 403, reason_phrase: "Forbidden", data: "SIP/2.0 403 Forbidden" },
+      cause: "Rejected",
+    },
+  });
+  assert.equal(isTemporarySipFailure(remote403), false);
+  assert.equal(
+    isTemporarySipFailure({ originator: "remote", message: { status_code: 486, reason_phrase: "Busy Here" }, cause: "Busy" }),
+    false,
+  );
+});
+
 test("事件详情只留排障字段，token 打码", () => {
   assert.equal(
     sipEventDetail({ callId: "c1", from: "ringing", to: "active", unrelated: "x" }),

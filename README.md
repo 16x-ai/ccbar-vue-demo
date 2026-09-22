@@ -67,6 +67,8 @@ status 只有三个值：`Available`(空闲) / `On Break`(置忙 reason=忙碌�
 
 **软电话 WSS 是必填项**（设置里填 `wss://…/api/fs/sip-ws`），服务端会带上它去拼会话里的 WSS 地址；`SIP 注册有效期`会随请求交给服务端，由服务端写进会话的 `sip.registerExpires`（留空默认 600 秒；SDK 拿不到有效值时才回退 300 秒）。
 
+SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、只由 JsSIP 每 10 分钟续一次注册；链路上有 nginx/NAT 空闲超时（nginx 默认 60 秒）时会被静默掐断长连接，把 `VITE_SIP_KEEPALIVE=25` 打开心跳即可。
+
 ### 换成新平台网关（可选）
 
 网关若部署了 `/webphone/v1/*`（新 SDK 的会话接口），构建时设 `VITE_LEGACY_PLATFORM=0` 切过去：

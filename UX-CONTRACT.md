@@ -4,17 +4,19 @@
 
 | 操作 | 行为 |
 |---|---|
-| 签入 | `client.connect({ extension })`：内部 `initialize()` → `tokenProvider` → `POST /webphone/v1/sessions` → REGISTER |
+| 签入 | `client.connect({ extension })`：内部 `initialize()` → 会话来源（默认 `sessionProvider` → 本地 `/get-session`；新平台形态才是 `tokenProvider`）→ REGISTER |
 | 退签 | `client.disconnect()`（挂断所有通话、删会话） |
 | 外呼 / 内呼 | `client.dial({ destination })`；内呼时号码先拼企业前缀（`prefixExtension`，与参考实现 `insideCall` 一致） |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })`（来电在接通前不是 active call，靠 `call.incoming` 的 callId 定位） |
-| 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')`；默认形态（旧平台）没有这个接口，点击提示「旧平台模式没有坐席状态接口」 |
-| 置忙 | 新 SDK 无 busy（`setBu()` 已废弃），按钮保留但点击提示不支持 |
+| 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `seats/set-status`（`Available` / `On Break`+reason=休息） |
+| 置忙 | 页面直接调 `setSeatStatus(config, 'On Break', '忙碌')`（SDK 的 `setAgentStatus` 没有 busy 取值），用 reason 与「休息」区分 |
 
 `dial` / `answer` / `setActiveCall` 在未连接时**同步抛错**，调用点必须 `try/catch`。按钮统一带 busy / 连接 / 号码条件禁用。
 
 **全屏加载**：签入（取会话 → 连 WSS → REGISTER，几秒钟）与设置坐席状态（空闲 / 置忙 / 休息）期间盖上全屏遮罩 + 转圈 + 文案（「正在签入…」「正在设置坐席状态…」），避免重复点击；操作结束（成功或失败）立即撤掉。
+
+**SIP 保活**：默认与注册有效期一致（600 秒），即不额外发心跳、只由 JsSIP 在到期前续注册。若链路上有 nginx/NAT 的空闲超时（nginx 默认 60 秒），SIP 通道会被静默掐断（页面仍显示已注册、但呼叫失败），这时把 `VITE_SIP_KEEPALIVE` 设成 25 恢复心跳。
 
 ## 日志
 
@@ -31,10 +33,11 @@
 - 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 接通中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。
 - SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 重连中 / 注册失败；收到 `connection.registered` 后显示「已注册」（class `ccbar_sip_status_reg|unreg`）。
 - 通话标签取「当前活动通话」，来电在接通前退回到第一路未结束的通话，所以振铃中也能正确显示。
+- 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号，旧平台才有；分机号是去掉前缀后的部分），退签后隐藏。
 
 ## 首通保护
 
-平台在注册后的首个外呼会回 480（`Q.850;cause=16`），新 SDK 把它包成 `call.failed` 的 `CCBarError`。页面在**签入后 15 秒窗口**内、且错误内容命中 480 / 暂时不可用 / 超时 / 网络类时，按「首次失败」起算的 1.5s / 3s / 6s 三个时间点自动重拨（有呼叫在走就跳过该时间点）；接通或退签立即停止。日志会写 `呼叫暂时不可用，1.5s / 3s / 6s 处自动重拨`。
+平台在每次注册后的**第一次外呼**会回 480（`Q.850;cause=16`），新 SDK 把它包成 `call.failed` 的 `CCBarError`。页面在「注册后还没打通过任何一路」且错误内容命中 480 / 暂时不可用 / 超时 / 网络类时，按「首次失败」起算的 1.5s / 3s / 6s 三个时间点自动重拨（有呼叫在走就跳过该时间点）；有一路接通、或退签，立即停止兜底。日志会写 `呼叫暂时不可用，1.5s / 3s / 6s 处自动重拨`。
 
 ## 设置
 

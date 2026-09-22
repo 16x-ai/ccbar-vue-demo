@@ -106,15 +106,26 @@ export function sipEventDetail(payload: unknown): string {
     for (const key of ["code", "category", "retryable", "status", "serverCode", "message"])
       if (typeof error[key] === "string" || typeof error[key] === "number" || typeof error[key] === "boolean")
         detail[`error.${key}`] = error[key] as string | number | boolean;
-    // 底层原因（JsSIP 抛的 InvalidStateError 之类）藏在 cause 里：
-    // 只留名字/消息/代码，排障时够用，也不会把整棵错误对象刷进面板
+    // 底层原因藏在 cause 里，两种形状都要认：
+    //   1) JsSIP 的异常（InvalidStateError 之类）：name / message / code
+    //   2) JsSIP 的通话失败原因：{ originator, message: SIP 响应, cause: 'SIP 错误码' }
+    //      —— 这一种最关键：480 / 403 这些真正的失败原因就在这里，不取出来只能去翻 SIP 原文
     const cause = error.cause as Record<string, unknown> | undefined;
     if (cause && typeof cause === "object") {
-      for (const key of ["name", "message", "code"]) {
+      for (const key of ["name", "code", "originator"]) {
         const value = cause[key];
-        if (typeof value === "string" || typeof value === "number")
-          detail[`error.cause.${key}`] = value;
+        if (typeof value === "string" || typeof value === "number") detail[`error.cause.${key}`] = value;
       }
+      const inner = cause.message;
+      if (inner && typeof inner === "object") {
+        const response = inner as { status_code?: unknown; reason_phrase?: unknown };
+        const status = typeof response.status_code === "number" ? String(response.status_code) : "";
+        const phrase = typeof response.reason_phrase === "string" ? response.reason_phrase : "";
+        if (status || phrase) detail["error.cause.status"] = `${status} ${phrase}`.trim();
+      } else if (typeof inner === "string" && inner !== "") {
+        detail["error.cause.message"] = inner;
+      }
+      if (typeof cause.cause === "string") detail["error.cause.reason"] = cause.cause;
     } else if (typeof cause === "string") {
       detail["error.cause"] = cause;
     }

@@ -83,6 +83,17 @@ html, body {
     font-weight: 600;
 }
 
+/* 前缀与分机分开显示：前缀淡一点，别抢分机的注意力 */
+.ext-chip .ext-prefix {
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.ext-chip .ext-sep {
+    margin: 0 6px;
+    color: var(--label);
+}
+
 .bar-row {
     display: grid;
     grid-template-columns: 48px 1fr;

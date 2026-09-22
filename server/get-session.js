@@ -13,6 +13,7 @@ const SIP_WS_PORT_DEFAULT = 7443;
 const AES_KEY = "q7X4p6MvK1z8Lb3A"; // 16 字节
 const AES_IV = "W9e2T4mN0aQ7Ru6C"; // 16 字节
 const SESSION_TTL_FALLBACK = 600;
+const ICE_PORT_DEFAULT = 3478;
 // 提前这么久换票：SDK 自己还会在会话到期前 60 秒刷新，两层加起来留够余量
 const PASSWORD_REFRESH_BUFFER = 180;
 
@@ -25,6 +26,15 @@ function seatAccountPath() {
 }
 function sipWsPath() {
   return process.env.CC_SIP_WS_PATH || SIP_WS_PATH_DEFAULT;
+}
+
+// 密码指纹：加盐哈希前 8 位，用于对比「两边拿到的是不是同一个密码」，不可逆、也不泄露密码
+export function fingerprint(value) {
+  return crypto
+    .createHash("sha256")
+    .update(`ccbar-seat-account:${value}`, "utf8")
+    .digest("hex")
+    .slice(0, 8);
 }
 
 // CryptoJS.AES.decrypt(密文, key, {iv, mode: CBC, padding: Pkcs7})：字符串密文按 Base64 处理
@@ -149,6 +159,13 @@ export async function getLegacySession({
   if (!username) throw new Error("坐席账号里没有 username");
   const password = decryptSeatPassword(seat.password);
   if (!password) throw new Error("坐席账号里的 password 解密后为空");
+  // 排障用：只打「长度 + 加盐哈希前 8 位」，不打印密码本身。
+  // 和参考页面控制台里的 CryptoJS.SHA256("ccbar-seat-account:" + 密码) 对比，
+  // 就能判断两边拿到的是不是同一个密码。
+  console.log(
+    `[ccbar-seat-account] 账号=${seat.username} 前缀=${seat.customerPrefix || "-"} 域名=${seat.domain} ` +
+      `密码长度=${password.length} 指纹=${fingerprint(password)}`,
+  );
 
   // SIP 密码是「票」，有效期由坐席账号接口的 expiresIn 决定（参考实现 _accountRefreshDelayMs 的默认值也是 600）。
   // 会话 TTL 必须按这张票算、并留出刷新缓冲，否则票先过期、后续 REGISTER 会 401。
@@ -159,15 +176,21 @@ export async function getLegacySession({
     `[ccbar-seat-account] 票有效期 seat=${seatTtl}s token=${tokenTtl}s → 会话 TTL=${ttl}s`,
   );
 
+  // 要不要把 fs token 挂到 WSS 上：参考页（能打通外呼的那套）是不挂的，
+  // 只把 token 用在 HTTP 接口的 Authorization 上。这里做成可配，默认沿用历史行为（挂）。
+  //   CC_SIP_WS_TOKEN=0  → 不挂 token
+  const withToken = String(process.env.CC_SIP_WS_TOKEN ?? "1") !== "0";
   const wssUrl = buildSipWsUrl({
     configured: sipWs,
     domain: seat.domain,
     wssPort: seat.wssPort,
     host,
-    token: fsToken,
+    token: withToken ? fsToken : "",
   });
+  console.log(`[ccbar-seat-account] WSS=${wssUrl.replace(/([?&]token=)[^&]*/gi, "$1***")}`);
   const sipDomain = sipDomainOf(seat.domain, wssUrl);
   const turnIp = String(seat.turnIp || "").trim();
+  const turnPort = Number(seat.turnPort) || ICE_PORT_DEFAULT;
 
   return {
     sessionId: `legacy-${Date.now().toString(36)}`,
@@ -193,9 +216,8 @@ export async function getLegacySession({
       ticket: "",
       ticketExpiresIn: ttl,
     },
-    // STUN 只带 IP、不带端口：平台下发的 turnPort 不加（带上那个端口反而连不上，
-    // 浏览器要等 ICE 收集超时，出局就慢了）
-    iceServers: turnIp ? [{ urls: [`stun:${turnIp}`] }] : [],
+    // STUN 地址按平台下发的 turnIp:turnPort 拼，没给端口时用 3478
+    iceServers: turnIp ? [{ urls: [`stun:${turnIp}:${turnPort}`] }] : [],
     policy: {
       maxConcurrentCalls: 2,
       incomingEnabled: true,

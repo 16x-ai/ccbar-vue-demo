@@ -43,10 +43,21 @@ export type IncomingCall = { callid: string; callerName: string };
 // 日志最多留多少行：参考页的 DOM 不设上限，Vue 里给个上限避免长会话把内存撑大
 const LOG_LIMIT = 500;
 
-// 首通保护：平台在每次注册刚完成时的第一个外呼会回 480（暂时不可用），几秒内自愈。
-// 只在签入后的这个时间窗里兜底重拨，避免把真正的失败也一遍遍重试。
-const FIRST_CALL_GUARD_MS = 15000;
+// 首通保护：平台在每次注册完成后的**第一次外呼**会回 480（Q.850 cause=16），几秒内自愈。
+// 按「注册后的第一次外呼」判定（不是按时间窗：用户可能签入后过很久才拨），
+// 并且只对暂时性失败生效，接通一次后就不再兜底。
 const CALL_RETRY_DELAYS = [1500, 3000, 6000];
+
+// SIP 保活间隔（秒）。平台侧的注册有效期是 600 秒，这里也设 600：
+// 等于不再额外发心跳，只由 JsSIP 在注册到期前续一次（约每 10 分钟一个 REGISTER）。
+// 注意：这样 SIP 通道空闲时没有任何报文，nginx 默认 60 秒空闲会断开长连接
+//（表现为「显示已注册但呼叫失败」）——除非把反向代理的 read timeout 放到 600 秒以上。
+// 需要更密的保活就把 VITE_SIP_KEEPALIVE 设成 25（或 0 关闭）。
+function sipKeepaliveSeconds(): number {
+  const raw = String(import.meta.env?.VITE_SIP_KEEPALIVE ?? "").trim();
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : 600;
+}
 
 // 可选：WebPhone API 的基地址。留空＝同源，由 Vite / nginx 把 /webphone/v1/* 转给平台
 function webphoneBaseUrl(): string {
@@ -87,11 +98,12 @@ export function usePhone() {
   let logSequence = 0;
   let unsubscribeSipDebug: (() => void) | undefined;
   const subscriptions: Array<() => void> = [];
-  let registeredAt = 0;
+  /** 注册之后还没成功打通过一次外呼（平台的首通 480 就发生在这时候） */
+  let firstCallAfterRegister = false;
   /** 网关是旧平台还是新平台（构建时决定，见 session.ts） */
   const legacyPlatform = isLegacyPlatform();
-  /** 旧平台账号里的分机前缀，显示分机时要去掉 */
-  let customerPrefix = "";
+  /** 旧平台的坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
+  const customerPrefix = ref("");
   /** 平台认的坐席账号（取回会话后才知道，可能带企业前缀）；置忙 / 退签要用它 */
   let seatAccount = config.extension;
   let activeCallId = "";
@@ -236,6 +248,7 @@ export function usePhone() {
   async function signOut() {
     stopAutoRedial();
     callRetry.inFlight = false;
+    firstCallAfterRegister = false;
     await client.value?.disconnect();
     // 与旧版一致：退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
@@ -249,6 +262,7 @@ export function usePhone() {
     agent.value = "offline";
     callState.value = "idle";
     extension.value = "";
+    customerPrefix.value = "";
     incoming.value = [];
   }
 
@@ -261,9 +275,9 @@ export function usePhone() {
     const instance = client.value;
     if (!instance) throw new Error("请先签入");
     stopAutoRedial();
-    const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix) : destination;
+    const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix.value) : destination;
     callRetry = { target, attempt: 0, timer: 0, startedAt: 0, inFlight: true };
-    const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix}）` : "";
+    const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix.value}）` : "";
     appendFlowLog(
       "info",
       "sip",
@@ -338,13 +352,13 @@ export function usePhone() {
       }),
       instance.on("connection.registered", () => {
         connection.value = "registered";
-        registeredAt = Date.now();
         // 与旧版一致：注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
         // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
         if (agent.value === "offline") agent.value = "available";
+        firstCallAfterRegister = true;
         const account = instance.getAgent()?.extension || config.extension;
         // 坐席账号可能带企业前缀，显示时去掉（参考页 shortExtension）
-        extension.value = shortExtension(account, customerPrefix);
+        extension.value = shortExtension(account, customerPrefix.value);
         appendPanelLog("sip", "ok", "sip", "connection.registered");
       }),
       instance.on("connection.reconnecting", (event) => {
@@ -385,6 +399,8 @@ export function usePhone() {
       }),
       instance.on("call.activeChanged", (event) => {
         appendFlowLog("info", "call", `call.activeChanged ${sipEventDetail(event)}`);
+        // 有一路接通了，说明平台已经正常，不用再兜底重拨
+        if (instance.getActiveCall()?.state === "active") firstCallAfterRegister = false;
         refreshCallState();
       }),
       instance.on("call.ended", (event) => {
@@ -396,16 +412,20 @@ export function usePhone() {
       }),
       instance.on("call.failed", (event) => {
         appendFlowLog("error", "call", `呼叫失败 connection=${connection.value} ${sipEventDetail(event)}`);
-        // 这个码是 JsSIP 在发 INVITE 之前抛的：UA 的 WebSocket 已经不在了（页面可能还显示已注册）
-        if (event.error.code === "CALL_OPERATION_NOT_ALLOWED") {
+        // 只有「UA 的 WebSocket 已经没了」这一种情况才提示重签（JsSIP 抛 InvalidStateError/NotConnected）；
+        // 平台回的 480 之类也会被 SDK 归到这个错误码上，不能一概而论
+        const cause = (event.error as { cause?: { name?: string; message?: string } }).cause;
+        const transportGone = /InvalidStateError|NotConnected|not connected/i.test(
+          `${cause?.name ?? ""} ${cause?.message ?? ""}`,
+        );
+        if (event.error.code === "CALL_OPERATION_NOT_ALLOWED" && transportGone) {
           appendFlowLog("warn", "sip", "话机连接可能已断开：请点退签再签入后重试");
         }
         removeIncoming(event.callId);
         callRetry.inFlight = false;
         showError(event.error.message);
-        // 刚签入就碰到「暂时不可用」：按固定时间点兜底重拨一次
-        const inGuardWindow = Date.now() - registeredAt <= FIRST_CALL_GUARD_MS;
-        if (callRetry.target && inGuardWindow && isTemporarySipFailure(event.error)) {
+        // 注册后的第一次外呼碰到「暂时不可用」：按固定时间点兜底重拨一次
+        if (callRetry.target && firstCallAfterRegister && isTemporarySipFailure(event.error)) {
           armAutoRedial(callRetry.target);
         }
         refreshCallState();
@@ -423,6 +443,8 @@ export function usePhone() {
     const options: CCBarClientOptions = {
       locale: "zh-CN",
       platform: "web",
+      // 与页面设置里的「SIP 注册有效期」一致：由 JsSIP 自己续注册，不再叠心跳
+      sipKeepaliveSeconds: sipKeepaliveSeconds(),
       ...(baseUrl ? { baseUrl } : {}),
       // 演示页单标签页，不启用 SharedWorker
       sharedWorker: { enabled: false, fallback: "single-tab" },
@@ -430,7 +452,7 @@ export function usePhone() {
     if (legacyPlatform) {
       // 旧平台：会话由我们自己的服务端拼好（server/get-session.js）
       const provider = createLegacySessionProvider(config, appendFlowLog, (account: SeatAccount) => {
-        customerPrefix = String(account.customerPrefix || "");
+        customerPrefix.value = String(account.customerPrefix || "");
         seatAccount = String(account.username || seatAccount);
         appendFlowLog(
           "ok",
@@ -491,6 +513,7 @@ export function usePhone() {
     agent,
     agentText: agentStatus,
     extension,
+    customerPrefix,
     number,
     feedback,
     busy,

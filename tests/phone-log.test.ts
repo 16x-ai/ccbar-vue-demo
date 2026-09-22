@@ -58,3 +58,34 @@ test("事件详情只留排障字段，token 打码", () => {
   assert.equal(sipEventDetail({ unrelated: 1 }), "");
   assert.equal(sipEventDetail(undefined), "");
 });
+
+test("JsSIP 的通话失败原因也要取出来（480 / 403 就在 cause.message 里）", () => {
+  // 形状来自 JsSIP 的 RTCSession failed 事件
+  const detail = sipEventDetail({
+    callId: "call_1",
+    error: {
+      code: "CALL_OPERATION_NOT_ALLOWED",
+      category: "call",
+      retryable: false,
+      message: "CALL_OPERATION_NOT_ALLOWED",
+      cause: {
+        originator: "remote",
+        message: { status_code: 480, reason_phrase: "Temporarily Unavailable" },
+        cause: "SIP Failure Code",
+      },
+    },
+  });
+  assert.match(detail, /"error\.cause\.status":"480 Temporarily Unavailable"/);
+  assert.match(detail, /"error\.cause\.originator":"remote"/);
+  assert.match(detail, /"error\.cause\.reason":"SIP Failure Code"/);
+  assert.match(detail, /"error\.code":"CALL_OPERATION_NOT_ALLOWED"/);
+});
+
+test("连接类错误（InvalidStateError）也照旧认得出来", () => {
+  const detail = sipEventDetail({
+    callId: "call_2",
+    error: { code: "CALL_OPERATION_NOT_ALLOWED", cause: { name: "InvalidStateError", message: "Not connected" } },
+  });
+  assert.match(detail, /"error\.cause\.name":"InvalidStateError"/);
+  assert.match(detail, /"error\.cause\.message":"Not connected"/);
+});

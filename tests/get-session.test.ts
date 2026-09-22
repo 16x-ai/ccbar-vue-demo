@@ -117,7 +117,7 @@ test("拼出 SDK 能用的会话：注册密码是解出来的明文", async () 
     assert.equal(session.transport.wssUrl, "wss://sip.example.test:7443/api/fs/sip-ws?token=fs-token");
     // 旧平台的凭据在 URL 上，没有 ticket 子协议
     assert.equal(session.transport.ticket, "");
-    assert.deepEqual(session.iceServers, [{ urls: ["stun:turn.example.test"] }]);
+    assert.deepEqual(session.iceServers, [{ urls: ["stun:turn.example.test:3478"] }]);
     assert.ok(session.capabilities.includes("outbound"));
     assert.ok(session.expiresAt > Math.floor(Date.now() / 1000));
     // 给页面显示分机用的附加字段（SDK 不读）

@@ -46,9 +46,18 @@ function saveSettings() {
           <span> · Vue 嵌入示例</span>
         </div>
         <div class="bar-head-right">
-          <span v-if="phone.extension.value" id="ccbar-extension" class="ext-chip"
-            >分机 <b>{{ phone.extension.value }}</b></span
+          <span
+            v-if="phone.extension.value"
+            id="ccbar-extension"
+            class="ext-chip"
+            :title="phone.customerPrefix.value ? `前缀 ${phone.customerPrefix.value}` : undefined"
           >
+            <template v-if="phone.customerPrefix.value"
+              >前缀 <b class="ext-prefix">{{ phone.customerPrefix.value }}</b></template
+            >
+            <span class="ext-sep" v-if="phone.customerPrefix.value">·</span>分机
+            <b>{{ phone.extension.value }}</b>
+          </span>
           <button type="button" id="ccbar-settings-btn" aria-label="设置" @click="settingsOpen = true">
             设置
           </button>

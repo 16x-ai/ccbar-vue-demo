@@ -14,6 +14,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions } from "@16x/webphone-sdk";
+import { createCallRetry } from "./callRetry";
 import { prefixExtension, shortExtension } from "./helpers";
 import {
   agentStatus,
@@ -44,9 +45,16 @@ export type IncomingCall = { callid: string; callerName: string };
 const LOG_LIMIT = 500;
 
 // 首通保护：平台在每次注册完成后的**第一次外呼**会回 480（Q.850 cause=16），几秒内自愈。
-// 按「注册后的第一次外呼」判定（不是按时间窗：用户可能签入后过很久才拨），
-// 并且只对暂时性失败生效，接通一次后就不再兜底。
-const CALL_RETRY_DELAYS = [1500, 3000, 6000];
+// 判定「注册后的第一次外呼」不是按时间窗（用户可能签入后过很久才拨），重拨的时间点与次数
+// 都由 lib/callRetry.ts 负责（单独文件、有单测）。这里只留页面侧的两个参数：
+//
+// 失败事件要落在最后一次拨号后这么久之内，才算「我们这通外呼失败了」：
+// call.failed 不带方向，SDK 又会在发事件前把通话从 getCalls() 里删掉，只能用时间窗认领。
+const OUTBOUND_FAILURE_WINDOW_MS = 60_000;
+
+// 真正「在响 / 在通话」的状态：这时候不插自动重拨。
+// new / dialing 不算 —— 那可能正是重拨自己刚拨出去的那一路。
+const LIVE_CALL_STATES: readonly CallState[] = ["ringing", "connecting", "active", "held"];
 
 // SIP 保活间隔（秒）。平台侧的注册有效期是 600 秒，这里也设 600：
 // 等于不再额外发心跳，只由 JsSIP 在注册到期前续一次（约每 10 分钟一个 REGISTER）。
@@ -98,8 +106,9 @@ export function usePhone() {
   let logSequence = 0;
   let unsubscribeSipDebug: (() => void) | undefined;
   const subscriptions: Array<() => void> = [];
-  /** 注册之后还没成功打通过一次外呼（平台的首通 480 就发生在这时候） */
-  let firstCallAfterRegister = false;
+  /** 最近一次拨出去的号码与时间：用来认领 call.failed 是不是我们这通外呼 */
+  let lastDialTarget = "";
+  let lastDialAt = 0;
   /** 网关是旧平台还是新平台（构建时决定，见 session.ts） */
   const legacyPlatform = isLegacyPlatform();
   /** 旧平台的坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
@@ -107,7 +116,6 @@ export function usePhone() {
   /** 平台认的坐席账号（取回会话后才知道，可能带企业前缀）；置忙 / 退签要用它 */
   let seatAccount = config.extension;
   let activeCallId = "";
-  let callRetry = { target: "", attempt: 0, timer: 0, startedAt: 0, inFlight: false };
 
   // ---------- 日志 ----------
   function appendPanelLog(panel: LogPanel, level: LogLevel, source: string, message: unknown) {
@@ -176,40 +184,39 @@ export function usePhone() {
   }
 
   // ---------- 首通保护：注册后第一个外呼回 480 时兜底重拨 ----------
-  function armAutoRedial(target: string) {
-    callRetry.target = target;
-    callRetry.attempt = 0;
-    callRetry.startedAt = Date.now();
-    appendFlowLog(
-      "warn",
-      "sip",
-      `呼叫暂时不可用，${CALL_RETRY_DELAYS.map((ms) => `${ms / 1000}s`).join(" / ")} 处自动重拨`,
-    );
-    planNextRetry();
-  }
-  function planNextRetry() {
-    const offset = CALL_RETRY_DELAYS[callRetry.attempt];
-    if (offset == null) return;
-    // 从「第一次失败」起算固定时间点，前面的尝试花掉的时间不算在内
-    const delay = Math.max(0, callRetry.startedAt + offset - Date.now());
-    callRetry.timer = window.setTimeout(() => {
-      callRetry.timer = 0;
-      callRetry.attempt += 1;
-      // 已经有呼叫在走（用户手动重拨成功）就跳过这个时间点
-      if (callRetry.inFlight) {
-        planNextRetry();
-        return;
+  // 节奏与次数都在 lib/callRetry.ts（那里有单测）：每次签入最多 3 次、
+  // 链条自己失败不会把进度清零、时间点从第一次失败起算。
+  // 这里只负责把事件翻译成日志，以及「拨哪儿、什么时候不拨」。
+  const retry = createCallRetry({
+    // 重拨走 startCall（不经过 dial），否则会把正在跑的链条自己取消掉
+    attempt: (target) => {
+      void startCall(target).catch(() => undefined);
+    },
+    // 已经有呼叫在响/在通话就别插进去抢（new / dialing 可能是重拨自己那一路）
+    hasLiveCall: () =>
+      (client.value?.getCalls() ?? []).some((call) => LIVE_CALL_STATES.includes(call.state)),
+    onEvent: (event) => {
+      switch (event.type) {
+        case "armed":
+          appendFlowLog(
+            "warn",
+            "sip",
+            `呼叫暂时不可用，${event.delays.map((ms) => `${ms / 1000}s`).join(" / ")} 处自动重拨` +
+              `（本次签入最多 ${event.delays.length} 次）`,
+          );
+          break;
+        case "attempt":
+          appendFlowLog("warn", "sip", `自动重拨（第 ${event.attempt} 次）${event.target}`);
+          break;
+        case "skipped":
+          appendFlowLog("info", "sip", `跳过第 ${event.attempt} 次自动重拨：已有呼叫在响或在通话`);
+          break;
+        case "exhausted":
+          appendFlowLog("warn", "sip", "自动重拨已用完，不再兜底（下次签入才会重新记账）");
+          break;
       }
-      appendFlowLog("warn", "sip", `自动重拨（第 ${callRetry.attempt} 次）${callRetry.target}`);
-      callRetry.inFlight = true;
-      void dial(callRetry.target).catch(() => undefined);
-      planNextRetry();
-    }, delay);
-  }
-  function stopAutoRedial() {
-    if (callRetry.timer) window.clearTimeout(callRetry.timer);
-    callRetry.timer = 0;
-  }
+    },
+  });
 
   // ---------- 动作：给页面按钮调用 ----------
   /** 统一包一层：防重复点击、清掉上一次的错误、结束刷新通话状态 */
@@ -246,9 +253,7 @@ export function usePhone() {
   }
 
   async function signOut() {
-    stopAutoRedial();
-    callRetry.inFlight = false;
-    firstCallAfterRegister = false;
+    retry.finish();
     await client.value?.disconnect();
     // 与旧版一致：退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
@@ -267,16 +272,17 @@ export function usePhone() {
   }
 
   /**
-   * 外呼 / 内呼。
+   * 真正拨出去：外呼、内呼、以及首通保护的重拨都走这里（所以不碰重拨链的状态）。
    * 内呼在旧平台上的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
    * 不能只靠 SDK 的 type=extension —— 那只是在 INVITE 上加一个平台不认的头。
    */
-  async function dial(destination: string, extensionCall = false) {
+  async function startCall(destination: string, extensionCall = false) {
     const instance = client.value;
     if (!instance) throw new Error("请先签入");
-    stopAutoRedial();
     const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix.value) : destination;
-    callRetry = { target, attempt: 0, timer: 0, startedAt: 0, inFlight: true };
+    // 记下这一通是谁、什么时候拨的：call.failed 来得太晚就不认（可能是别的通话失败了）
+    lastDialTarget = target;
+    lastDialAt = Date.now();
     const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix.value}）` : "";
     appendFlowLog(
       "info",
@@ -286,6 +292,12 @@ export function usePhone() {
     await instance.dial(
       extensionCall && !legacyPlatform ? { destination, type: "extension" } : { destination: target },
     );
+  }
+
+  /** 用户点「外呼 / 内呼」：先停掉上一轮还没走完的重拨时间点，免得插进来抢 */
+  async function dial(destination: string, extensionCall = false) {
+    retry.cancel();
+    await startCall(destination, extensionCall);
   }
 
   async function hangup() {
@@ -355,7 +367,8 @@ export function usePhone() {
         // 与旧版一致：注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
         // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
         if (agent.value === "offline") agent.value = "available";
-        firstCallAfterRegister = true;
+        // 每次注册完成都重新记账：首通保护只在这个周期内生效（额度、进度都清零）
+        retry.reset();
         const account = instance.getAgent()?.extension || config.extension;
         // 坐席账号可能带企业前缀，显示时去掉（参考页 shortExtension）
         extension.value = shortExtension(account, customerPrefix.value);
@@ -400,14 +413,13 @@ export function usePhone() {
       instance.on("call.activeChanged", (event) => {
         appendFlowLog("info", "call", `call.activeChanged ${sipEventDetail(event)}`);
         // 有一路接通了，说明平台已经正常，不用再兜底重拨
-        if (instance.getActiveCall()?.state === "active") firstCallAfterRegister = false;
+        if (instance.getActiveCall()?.state === "active") retry.finish();
         refreshCallState();
       }),
       instance.on("call.ended", (event) => {
         appendFlowLog("info", "call", `呼叫结束 ${sipEventDetail(event)}`);
         removeIncoming(event.callId);
-        stopAutoRedial();
-        callRetry.inFlight = false;
+        retry.cancel();
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
@@ -422,11 +434,11 @@ export function usePhone() {
           appendFlowLog("warn", "sip", "话机连接可能已断开：请点退签再签入后重试");
         }
         removeIncoming(event.callId);
-        callRetry.inFlight = false;
         showError(event.error.message);
-        // 注册后的第一次外呼碰到「暂时不可用」：按固定时间点兜底重拨一次
-        if (callRetry.target && firstCallAfterRegister && isTemporarySipFailure(event.error)) {
-          armAutoRedial(callRetry.target);
+        // 注册后的第一次外呼碰到「暂时不可用」：交给首通保护兜底。
+        // 额度按每次签入算（见 lib/callRetry.ts），所以这里可以放心对每次失败都调一次 arm。
+        if (isTemporarySipFailure(event.error) && Date.now() - lastDialAt < OUTBOUND_FAILURE_WINDOW_MS) {
+          retry.arm(lastDialTarget);
         }
         refreshCallState();
       }),
@@ -493,7 +505,7 @@ export function usePhone() {
 
   function unmount() {
     disposeClient();
-    stopAutoRedial();
+    retry.cancel();
     unsubscribeSipDebug?.();
     unsubscribeSipDebug = undefined;
   }

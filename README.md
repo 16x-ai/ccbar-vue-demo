@@ -104,7 +104,7 @@ dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转�
 
 ## 已知环境行为
 
-平台在**每次注册完成后的首个外呼**会回 `480 Temporarily Unavailable`（带 `Reason: Q.850;cause=16;text="NORMAL_CLEARING"`，即对端振铃前被正常清除），几秒内自愈。页面在签入后 15 秒窗口内遇到这类暂时性失败（`call.failed` 且错误里含 480 / 超时 / 网络类）会自动重拨 1.5s / 3s / 6s 各一次，呼叫一起来就停。**根因在平台侧**，要彻底解决需平台方查同一次签入里失败/成功两条 INVITE 的 Call-ID。
+平台在**每次注册完成后的首个外呼**会回 `480 Temporarily Unavailable`（带 `Reason: Q.850;cause=16;text="NORMAL_CLEARING"`，即对端振铃前被正常清除），几秒内自愈。页面遇到这类暂时性失败（`call.failed` 且错误里含 480 / 超时 / 网络类）会按「首次失败」起算的 1.5s / 3s / 6s 三个时间点自动重拨：**额度按每次签入记账，一轮最多 3 次**，重拨自己再失败既不会重置次数也不会重新计时；某一路接通、退签、或额度用完即停止；已经有一路在响或在通话时该时间点跳过、后面的照走；用户手动拨号会取消当前链条。节奏与计数在 `src/lib/callRetry.ts`（有单测），页面只负责日志与「拨哪儿」。**根因在平台侧**，要彻底解决需平台方查同一次签入里失败/成功两条 INVITE 的 Call-ID。
 
 ## SIP 原文
 
@@ -116,7 +116,7 @@ dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转�
 
 - 页面 `import { CCBarClient } from "@16x/webphone-sdk"`。
 - 本地若存在 `D:\code\ccbar-web-sdk\src`，Vite 会 alias 到**源码**（方便边改 SDK 边调）；客户机器上没有该目录时自动用 **npm 包**。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
-- 仓库里**不再有**旧版脚本式 SDK（`public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 已删）：页面只走 npm 包，交付包里也就不会混进另一套 1.1MB 的旧 SDK。需要对照旧实现时看 `D:\codeÊll\ccbar`。
+- 仓库里**不再有**旧版脚本式 SDK（`public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 已删）：页面只走 npm 包，交付包里也就不会混进另一套 1.1MB 的旧 SDK。需要对照旧实现时看 `D:\code\xcall\ccbar`（带 token 的 fork）和 `D:\code\ccbar`（能打通外呼的参考页）。
 
 ## 脚本
 
@@ -134,6 +134,7 @@ dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转�
 src/App.vue                     页面骨架：状态标签 + 按钮 + 日志卡片（薄，只做绑定）
 src/components/                 设置弹窗、日志卡片、来电浮层
 src/lib/usePhone.ts             页面逻辑：状态、按钮动作、SDK 事件 → 页面状态与日志
+src/lib/callRetry.ts            首通保护：480 后的重拨节奏与额度（纯函数，有单测）
 src/lib/session.ts              会话来源（默认 sessionProvider）+ 坐席状态
 src/lib/settings.ts             设置读、校验、写 localStorage
 src/lib/sipDebug.ts             SIP 原文：打开 JsSIP debug 并接住 console

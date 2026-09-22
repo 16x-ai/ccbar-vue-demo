@@ -15,7 +15,6 @@ const AES_IV = "W9e2T4mN0aQ7Ru6C"; // 16 字节
 const SESSION_TTL_FALLBACK = 600;
 // 提前这么久换票：SDK 自己还会在会话到期前 60 秒刷新，两层加起来留够余量
 const PASSWORD_REFRESH_BUFFER = 180;
-const ICE_PORT_DEFAULT = 3478;
 
 // 与参考实现里的 capabilities 一致：旧平台这六项都支持
 const CAPABILITIES = ["outbound", "inbound", "mute", "dtmf", "hold", "blind_transfer"];
@@ -169,7 +168,6 @@ export async function getLegacySession({
   });
   const sipDomain = sipDomainOf(seat.domain, wssUrl);
   const turnIp = String(seat.turnIp || "").trim();
-  const turnPort = Number(seat.turnPort) || ICE_PORT_DEFAULT;
 
   return {
     sessionId: `legacy-${Date.now().toString(36)}`,
@@ -195,7 +193,9 @@ export async function getLegacySession({
       ticket: "",
       ticketExpiresIn: ttl,
     },
-    iceServers: turnIp ? [{ urls: [`stun:${turnIp}:${turnPort}`] }] : [],
+    // STUN 只带 IP、不带端口：平台下发的 turnPort 不加（带上那个端口反而连不上，
+    // 浏览器要等 ICE 收集超时，出局就慢了）
+    iceServers: turnIp ? [{ urls: [`stun:${turnIp}`] }] : [],
     policy: {
       maxConcurrentCalls: 2,
       incomingEnabled: true,

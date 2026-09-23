@@ -14,14 +14,12 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions } from "@16x/webphone-sdk";
-import { createCallRetry } from "./callRetry";
 import { normalizeUserdata, prefixExtension, shortExtension } from "./helpers";
 import {
   agentStatus,
   callStatus,
   connectionStatus,
   isLocalFailure,
-  isTemporarySipFailure,
   messageText,
   sipEventDetail,
   stringifyLog,
@@ -46,17 +44,8 @@ export type IncomingCall = { callid: string; callerName: string };
 // 日志最多留多少行：参考页的 DOM 不设上限，Vue 里给个上限避免长会话把内存撑大
 const LOG_LIMIT = 500;
 
-// 首通保护：平台在每次注册完成后的**第一次外呼**会回 480（Q.850 cause=16），几秒内自愈。
-// 判定「注册后的第一次外呼」不是按时间窗（用户可能签入后过很久才拨），重拨的时间点与次数
-// 都由 lib/callRetry.ts 负责（单独文件、有单测）。这里只留页面侧的两个参数：
-//
-// 失败事件要落在最后一次拨号后这么久之内，才算「我们这通外呼失败了」：
-// call.failed 不带方向，SDK 又会在发事件前把通话从 getCalls() 里删掉，只能用时间窗认领。
-const OUTBOUND_FAILURE_WINDOW_MS = 60_000;
-
-// 真正「在响 / 在通话」的状态：这时候不插自动重拨。
-// new / dialing 不算 —— 那可能正是重拨自己刚拨出去的那一路。
-const LIVE_CALL_STATES: readonly CallState[] = ["ringing", "connecting", "active", "held"];
+// 已知平台行为：每次注册完成后的**第一次外呼**会被回 480（Q.850 cause=16），几秒内自愈。
+// 这是平台侧的毛病，页面**不兜底、不自动重拨**：照常提示失败，由坐席自己再拨一次。
 
 // 自定义参数：外呼 / 内呼时随 INVITE 带上 X-User-Data 头，由平台/服务端从 SIP 报文里读
 //（页面侧读不到 —— SDK 不暴露 SIP 头）。**改这里就行**：每个接入方要传的内容不一样，
@@ -119,9 +108,6 @@ export function usePhone() {
   let logSequence = 0;
   let unsubscribeSipDebug: (() => void) | undefined;
   const subscriptions: Array<() => void> = [];
-  /** 最近一次拨出去的号码与时间：用来认领 call.failed 是不是我们这通外呼 */
-  let lastDialTarget = "";
-  let lastDialAt = 0;
   /** 网关是旧平台还是新平台（构建时决定，见 session.ts） */
   const legacyPlatform = isLegacyPlatform();
   /** 旧平台的坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
@@ -212,45 +198,6 @@ export function usePhone() {
     incoming.value = incoming.value.filter((call) => call.callid !== callId);
   }
 
-  // ---------- 首通保护：注册后第一个外呼回 480 时兜底重拨 ----------
-  // 节奏与次数都在 lib/callRetry.ts（那里有单测）：默认 0.8s 后重拨一次、
-  // 每次签入只这一次、链条自己失败不会把进度清零。
-  // 这里只负责把事件翻译成日志，以及「拨哪儿、什么时候不拨」。
-  const retry = createCallRetry({
-    // 重拨走 startCall（不经过 dial），否则会把正在跑的链条自己取消掉
-    attempt: (target) => {
-      void startCall(target).catch(() => undefined);
-    },
-    // 已经有呼叫在响/在通话就别插进去抢（new / dialing 可能是重拨自己那一路）
-    hasLiveCall: () =>
-      (client.value?.getCalls() ?? []).some((call) => LIVE_CALL_STATES.includes(call.state)),
-    onEvent: (event) => {
-      switch (event.type) {
-        case "armed": {
-          // 文案对齐老 ccbar 的「首通 480 Temporarily Unavailable，自动重拨一次」，
-          // 时间点与额度按实际配置写出来（默认只有一档：0.8s）
-          const times = event.delays.map((ms) => `${ms / 1000}s`).join(" / ");
-          const quota = event.delays.length === 1 ? "只重拨一次" : `最多 ${event.delays.length} 次`;
-          appendFlowLog(
-            "warn",
-            "sip",
-            `首通 480 Temporarily Unavailable，${times} 后自动重拨（本次签入${quota}）`,
-          );
-          break;
-        }
-        case "attempt":
-          appendFlowLog("warn", "sip", `自动重拨 ${event.target}`);
-          break;
-        case "skipped":
-          appendFlowLog("info", "sip", "已有呼叫在响或在通话，跳过自动重拨");
-          break;
-        case "exhausted":
-          appendFlowLog("warn", "sip", "自动重拨已用完，不再兜底（下次签入才会重新记账）");
-          break;
-      }
-    },
-  });
-
   // ---------- 动作：给页面按钮调用 ----------
   /** 统一包一层：防重复点击、清掉上一次的错误、结束刷新通话状态 */
   async function run(name: string, action: () => unknown | Promise<unknown>) {
@@ -286,7 +233,6 @@ export function usePhone() {
   }
 
   async function signOut() {
-    retry.finish();
     await client.value?.disconnect();
     // 与旧版一致：退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
@@ -305,7 +251,7 @@ export function usePhone() {
   }
 
   /**
-   * 真正拨出去：外呼、内呼、以及首通保护的重拨都走这里（所以不碰重拨链的状态）。
+   * 真正拨出去：外呼与内呼都走这里。
    * 内呼在旧平台上的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
    * 不能只靠 SDK 的 type=extension —— 那只是在 INVITE 上加一个平台不认的头。
    */
@@ -315,9 +261,6 @@ export function usePhone() {
     // 常量先过一道校验：写错了（中文/换行）就在红字行给中文提示，别把 SDK 的错误码丢出来
     const data = normalizeUserdata(USERDATA);
     const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix.value) : destination;
-    // 记下这一通是谁、什么时候拨的：call.failed 来得太晚就不认（可能是别的通话失败了）
-    lastDialTarget = target;
-    lastDialAt = Date.now();
     const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix.value}）` : "";
     const withData = data ? `（X-User-Data: ${data}）` : "";
     appendFlowLog(
@@ -332,9 +275,8 @@ export function usePhone() {
     );
   }
 
-  /** 用户点「外呼 / 内呼」：先停掉上一轮还没走完的重拨时间点，免得插进来抢 */
+  /** 用户点「外呼 / 内呼」 */
   async function dial(destination: string, extensionCall = false) {
-    retry.cancel();
     await startCall(destination, extensionCall);
   }
 
@@ -405,8 +347,6 @@ export function usePhone() {
         // 与旧版一致：注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
         // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
         if (agent.value === "offline") agent.value = "available";
-        // 每次注册完成都重新记账：首通保护只在这个周期内生效（额度、进度都清零）
-        retry.reset();
         const account = instance.getAgent()?.extension || config.extension;
         // 坐席账号可能带企业前缀，显示时去掉（参考页 shortExtension）
         extension.value = shortExtension(account, customerPrefix.value);
@@ -450,14 +390,11 @@ export function usePhone() {
       }),
       instance.on("call.activeChanged", (event) => {
         appendFlowLog("info", "call", `call.activeChanged ${sipEventDetail(event)}`);
-        // 有一路接通了，说明平台已经正常，不用再兜底重拨
-        if (instance.getActiveCall()?.state === "active") retry.finish();
         refreshCallState();
       }),
       instance.on("call.ended", (event) => {
         appendFlowLog("info", "call", `呼叫结束 ${sipEventDetail(event)}`);
         removeIncoming(event.callId);
-        retry.cancel();
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
@@ -481,12 +418,6 @@ export function usePhone() {
         }
         removeIncoming(event.callId);
         if (!local) showError(event.error.message);
-        // 注册后的第一次外呼碰到「暂时不可用」：交给首通保护兜底。
-        // 额度按每次签入算（见 lib/callRetry.ts），所以这里可以放心对每次失败都调一次 arm；
-        // 本机取消的不算（老 ccbar 的重拨判定同样排除 originator=local）。
-        if (!local && isTemporarySipFailure(event.error) && Date.now() - lastDialAt < OUTBOUND_FAILURE_WINDOW_MS) {
-          retry.arm(lastDialTarget);
-        }
         refreshCallState();
       }),
       instance.on("error", (event) => {
@@ -552,7 +483,6 @@ export function usePhone() {
 
   function unmount() {
     disposeClient();
-    retry.cancel();
     unsubscribeSipDebug?.();
     unsubscribeSipDebug = undefined;
   }

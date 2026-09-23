@@ -1,5 +1,4 @@
 // 页面实际用到的纯函数：API 主机 / 软电话 WSS 校验。
-// 首通失败判定在 logs.ts 的 isTemporarySipFailure（需要对 CCBarError 做 stringify）。
 
 // 只做规整（去掉尾部斜杠），**不改写域名**：每个客户/环境的主机由使用方自己填，页面不替他们换。
 export function migrateApiHost(value: string): string {

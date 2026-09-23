@@ -29,7 +29,8 @@
 - 拦截 console（`log/info/warn/error/debug`），命中 `JsSIP|WebSocket|Registration|registrar|sip:|UA[|transport|WebPhone` 的输出写进 `SIP` 面板（来源 `jssip`）。SIP 原文靠 `localStorage.debug='JsSIP:*'`（见 README「SIP 原文开关」）。
 - 写日志前对 `token=`、`"password"` 打码；`Error` 取 message，对象转 JSON。
 - **提示分两层**（对齐老 ccbar）：红字行给人看 —— 错误码换成中文（`logs.ts` 的 `errorText`：`CALL_OPERATION_NOT_ALLOWED` → 「呼叫失败」，`CALL_BUSY` → 「对方忙」…），日志里保留原文（错误码 / SIP 原因）给排障。
-- **本机自己结束的呼叫不算失败**：`call.failed` 的 `error.cause.originator === 'local'`（挂断、拒接、振铃中取消）时只写一行 `本机结束呼叫`，不弹红字、也不触发首通保护重拨 —— 老 ccbar 的规则是 `if (data.originator !== 'local') setError('呼叫失败')`。只有对端导致的失败（480 / 拒接 / 忙 …）才提示「呼叫失败」。
+- **本机自己结束的呼叫不算失败**：`call.failed` 的 `error.cause.originator === 'local'`（挂断、拒接、振铃中取消）时只写一行 `本机结束呼叫`，不弹红字 —— 老 ccbar 的规则是 `if (data.originator !== 'local') setError('呼叫失败')`。只有对端导致的失败（480 / 拒接 / 忙 …）才提示「呼叫失败」。
+- **失败不自动重拨**：`call.failed` 只写日志、弹红字，页面不做任何重试（老 ccbar 有一层「首通 480 后 0.8s 重拨一次」，本示例不要）。
 
 ## 状态标签
 
@@ -38,10 +39,6 @@
 - SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 注册失败；收到 `connection.registered` 后显示「已注册」。文案与配色对齐老 ccbar（`getStatusText` + `updateUIStatus`）：**只有「已注册」是绿的**（`ccbar_sip_status_reg`），连上了但还没注册成功（已连接）仍是灰的；SDK 的 `reconnecting`（老 ccbar 没有这个概念）显示「未注册」，重连次数只写日志（`重连中（第 N 次）`）。
 - 通话标签取「当前活动通话」，来电在接通前退回到第一路未结束的通话，所以振铃中也能正确显示。
 - 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号，旧平台才有；分机号是去掉前缀后的部分），退签后隐藏。
-
-## 首通保护
-
-平台在每次注册后的**第一次外呼**会回 480（`Q.850;cause=16`），新 SDK 把它包成 `call.failed` 的 `CCBarError`。页面在「注册后还没打通过任何一路」且错误内容命中 480 / 暂时不可用 / 超时 / 网络类时，**照老 ccbar 的规矩在 0.8 秒后自动重拨一次**（`_shouldRetryCall` + 800ms 的 `_retryLastCall` + `!_callRetried`）；**额度按每次签入记账，一次签入只重拨 1 次**：重拨自己再失败不会重置次数（因此不会变成无限重拨）；某一路接通、退签、或额度用完即停止；到那一刻已经有呼叫在响或在通话就跳过；用户手动拨号会取消当前链条。逻辑与计数在 `src/lib/callRetry.ts`（有单测；默认就一档时间点，要 1.5s / 3s / 6s 这种多档得用 `options.delays` 显式传），日志由 `usePhone` 翻译：`首通 480 Temporarily Unavailable，0.8s 后自动重拨（本次签入只重拨一次）`、`自动重拨 <号码>`、`已有呼叫在响或在通话，跳过自动重拨`、`自动重拨已用完，不再兜底（下次签入才会重新记账）`。
 
 ## 设置
 

@@ -40,13 +40,18 @@ export const agentStatus: Record<AgentState, { text: string; tone: string }> = {
   offline: { text: "离线", tone: "offline" },
 };
 
-// 服务（通话）标签：把 SDK 的 8 个 CallState 归到参考页的 class 词汇上
+// 服务（通话）标签：把 SDK 的 8 个 CallState 归到参考页的 class 词汇上。
+//
+// 老 ccbar 没有「接通中」这一档（serv 只有 空闲/振铃中/呼出中/通话中/保持中/转接中）：
+// `_refreshServiceStatus` 里 isEstablished() 一成立就是 talking，而 200 OK 一到
+// isEstablished() 就为真 —— 所以「已应答但媒体还没连上」这段（SDK 的 connecting）
+// 在 ccbar 那边显示的就是「通话中」，这里照做，别自作主张加一档。
 export const callStatus: Record<CallState | "idle", { text: string; tone: string }> = {
   idle: { text: "空闲", tone: "idle" },
   new: { text: "新建", tone: "idle" },
   dialing: { text: "呼出中", tone: "calling" },
   ringing: { text: "振铃中", tone: "busy" },
-  connecting: { text: "接通中", tone: "calling" },
+  connecting: { text: "通话中", tone: "talking" },
   active: { text: "通话中", tone: "talking" },
   held: { text: "保持中", tone: "hold" },
   ended: { text: "已结束", tone: "idle" },

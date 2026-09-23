@@ -29,6 +29,9 @@ test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页�
   assert.equal(callStatus.idle.text, "空闲");
   assert.equal(callStatus.dialing.text, "呼出中");
   assert.equal(callStatus.ringing.text, "振铃中");
+  // 老 ccbar 没有「接通中」：200 OK 一到（isEstablished() 成立）就是 talking
+  assert.equal(callStatus.connecting.text, "通话中");
+  assert.equal(callStatus.connecting.tone, "talking");
   assert.equal(callStatus.active.text, "通话中");
   assert.equal(callStatus.held.text, "保持中");
   assert.equal(agentStatus.available.text, "在线");

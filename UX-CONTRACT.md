@@ -35,7 +35,7 @@
 ## 状态标签
 
 - 工作（坐席）：`agent.statusChanged` → 在线 / 休息 / 离线（class `ccbar_work_status_online|reset|offline`）。
-- 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 接通中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。
+- 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。**没有「接通中」**：老 ccbar 的 serv 词表里就没有这一档，`_refreshServiceStatus` 是「`isEstablished()` 成立即 talking」，200 OK 一到就成立，所以 SDK 的 `connecting`（已应答、媒体还没连上）也显示「通话中」（绿色 `talking`），与 `active` 同文案 —— 两个状态在 SDK 里仍然分着。
 - SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 注册失败；收到 `connection.registered` 后显示「已注册」。文案与配色对齐老 ccbar（`getStatusText` + `updateUIStatus`）：**只有「已注册」是绿的**（`ccbar_sip_status_reg`），连上了但还没注册成功（已连接）仍是灰的；SDK 的 `reconnecting`（老 ccbar 没有这个概念）显示「未注册」，重连次数只写日志（`重连中（第 N 次）`）。
 - 通话标签取「当前活动通话」，来电在接通前退回到第一路未结束的通话，所以振铃中也能正确显示。
 - 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号，旧平台才有；分机号是去掉前缀后的部分），退签后隐藏。

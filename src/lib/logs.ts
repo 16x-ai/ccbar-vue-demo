@@ -53,14 +53,21 @@ export const callStatus: Record<CallState | "idle", { text: string; tone: string
   failed: { text: "失败", tone: "busy" },
 };
 
-// SIP / 连接标签：注册后显示「已注册」，其余按连接状态
+// SIP / 连接标签：文案与配色对齐老 ccbar 的 getStatusText + updateUIStatus：
+//   文案：unreg/unregistered=未注册、connecting=连接中、connected=已连接、registered=已注册、
+//         failed=注册失败、error=错误
+//   配色：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}` —— **只有「已注册」是绿的**，
+//         连上了但还没注册成功（connected）仍然是灰的。
+// 两点与 SDK 状态的对应：SDK 的 offline 对应老 ccbar 的 unreg/unregistered；
+// 「重连中」（SDK 的 reconnecting）在老 ccbar 里没有这个概念 —— 断链时它显示「未注册」，
+// 重连过程只写进日志（见 usePhone 的「重连中（第 N 次）」）。所以这里也按「未注册」展示。
 export const connectionStatus: Record<ConnectionState | "registered", { text: string; tone: string }> =
   {
     registered: { text: "已注册", tone: "reg" },
     offline: { text: "未注册", tone: "unreg" },
     connecting: { text: "连接中", tone: "unreg" },
-    connected: { text: "已连接", tone: "reg" },
-    reconnecting: { text: "重连中", tone: "unreg" },
+    connected: { text: "已连接", tone: "unreg" },
+    reconnecting: { text: "未注册", tone: "unreg" },
     failed: { text: "注册失败", tone: "unreg" },
   };
 

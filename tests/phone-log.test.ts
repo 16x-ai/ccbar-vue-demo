@@ -24,7 +24,8 @@ test("日志文本与参考页 stringifyLog 一致，token 打码", () => {
 
 test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页词汇", () => {
   assert.deepEqual(connectionStatus.registered, { text: "已注册", tone: "reg" });
-  assert.equal(connectionStatus.reconnecting.text, "重连中");
+  assert.equal(connectionStatus.connecting.text, "连接中");
+  assert.equal(connectionStatus.connected.text, "已连接");
   assert.equal(connectionStatus.failed.text, "注册失败");
   assert.equal(callStatus.idle.text, "空闲");
   assert.equal(callStatus.dialing.text, "呼出中");
@@ -37,6 +38,17 @@ test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页�
   for (const { tone } of Object.values(callStatus)) {
     assert.ok(["idle", "busy", "calling", "talking", "hold"].includes(tone), tone);
   }
+});
+
+test("SIP 标签对齐老 ccbar：只有「已注册」是绿的，断链显示「未注册」", () => {
+  // ccbar.js updateUIStatus：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}`
+  for (const [state, { tone }] of Object.entries(connectionStatus)) {
+    assert.equal(tone === "reg", state === "registered", `${state} 的配色与 ccbar 不一致`);
+  }
+  // 连上了但还没注册成功（connected）仍然按灰的展示
+  assert.equal(connectionStatus.connected.tone, "unreg");
+  // SDK 的「重连中」在老 ccbar 里没有这个概念：断链统一显示「未注册」，细节只在日志里
+  assert.deepEqual(connectionStatus.reconnecting, { text: "未注册", tone: "unreg" });
 });
 
 test("失败提示：错误码换成中文，其它文案原样（老 ccbar 的提示都是中文）", () => {

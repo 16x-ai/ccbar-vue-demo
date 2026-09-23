@@ -7,6 +7,7 @@
 | 签入 | `client.connect({ extension })`：内部 `initialize()` → 会话来源（默认 `sessionProvider` → 本地 `/get-session`；新平台形态才是 `tokenProvider`）→ REGISTER |
 | 退签 | `client.disconnect()`（挂断所有通话、删会话） |
 | 外呼 / 内呼 | `client.dial({ destination })`；内呼时号码先拼企业前缀（`prefixExtension`，与参考实现 `insideCall` 一致） |
+| 外呼 / 内呼（带参数） | 代码里的 `USERDATA` 常量非空时随 INVITE 带上 `X-User-Data` 头：`client.dial({ destination, userdata })`（需 SDK ≥ 3.1.5）。页面上没有输入框；只放行可见 ASCII，非法值由 `normalizeUserdata` 拦下并在红字行给中文提示；平台/服务端读这个头，页面侧读不到 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })`（来电在接通前不是 active call，靠 `call.incoming` 的 callId 定位） |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `seats/set-status`（`Available` / `On Break`+reason=休息） |
@@ -22,10 +23,13 @@
 
 - 两个面板：`日志`（流程）与 `SIP`，可切换；`清空` 只清当前面板。空面板显示占位文案，清空后显示「已清空」。
 - 每行格式 `HH:MM:SS.mmm [来源] 内容`；来源：`app` / `token` / `status` / `call` / `sip` / `jssip` / `ccbar`。
+- 外呼 / 内呼那行会带上自定义参数：`外呼 <号码>（X-User-Data: <值>）（话机连接=…）`（`USERDATA` 留空时中间那段省略）。
 - 级别决定颜色：`ok` 绿、`warn` 黄、`error` 红、`info` 默认。
 - SDK 事件（`connection.*` / `call.*` / `agent.*` / `error`）经 `sipEventDetail` 只留排障字段后入日志；`call.failed`、`connection.failed`、`error` 记 error 级。
 - 拦截 console（`log/info/warn/error/debug`），命中 `JsSIP|WebSocket|Registration|registrar|sip:|UA[|transport|WebPhone` 的输出写进 `SIP` 面板（来源 `jssip`）。SIP 原文靠 `localStorage.debug='JsSIP:*'`（见 README「SIP 原文开关」）。
 - 写日志前对 `token=`、`"password"` 打码；`Error` 取 message，对象转 JSON。
+- **提示分两层**（对齐老 ccbar）：红字行给人看 —— 错误码换成中文（`logs.ts` 的 `errorText`：`CALL_OPERATION_NOT_ALLOWED` → 「呼叫失败」，`CALL_BUSY` → 「对方忙」…），日志里保留原文（错误码 / SIP 原因）给排障。
+- **本机自己结束的呼叫不算失败**：`call.failed` 的 `error.cause.originator === 'local'`（挂断、拒接、振铃中取消）时只写一行 `本机结束呼叫`，不弹红字、也不触发首通保护重拨 —— 老 ccbar 的规则是 `if (data.originator !== 'local') setError('呼叫失败')`。只有对端导致的失败（480 / 拒接 / 忙 …）才提示「呼叫失败」。
 
 ## 状态标签
 

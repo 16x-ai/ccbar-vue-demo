@@ -33,6 +33,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http:/
 | 签入 | `client.connect({ extension })`（内部先 `initialize()`，再取 Token、建会话、REGISTER） |
 | 退签 | `client.disconnect()` |
 | 外呼 | `client.dial({ destination })` |
+| 外呼 / 内呼带自定义参数 | `client.dial({ destination, userdata })`：代码里的 `USERDATA` 常量非空时原样写进 INVITE 的 `X-User-Data` 头，由平台/服务端读。只能可见 ASCII，留空＝不带头（见下） |
 | 内呼 | `client.dial({ destination: 前缀+分机号 })`：旧平台的「内呼」就是把企业前缀（`customerPrefix`）拼在号码前，和参考实现 `insideCall` 一致 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上的 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })` |
@@ -40,6 +41,26 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http:/
 | 置忙 | 页面自己的 `setBusy()` → `POST /set-agent-status`（平台侧是 On Break + reason=忙碌；忙碌与休息平台用同一个状态、靠 reason 区分） |
 
 按钮都带 busy / 连接 / 号码条件禁用（旧脚本版没有，这次补上了）。`dial` / `answer` 在未连接时是**同步抛错**，页面用 `try/catch` 包住。
+
+### 自定义参数（`X-User-Data`）
+
+外呼 / 内呼时可以带一段自定义参数出去，平台/服务端从 SIP 报文的 **`X-User-Data`** 头里读
+（旧版脚本 SDK 的 `userdata`，3.1.5 起重新支持；头名与含义没变，平台侧不用改）。
+**页面上没有入口** —— 每个接入方要传的内容不一样，直接在代码里改一行：
+
+```ts
+// src/lib/usePhone.ts 顶部
+const USERDATA = "";   // 例：'tenant=acme;agent=7'
+```
+
+改完这行，外呼 / 内呼（含首通保护的自动重拨）都会带上。约束：
+
+- 只能**可见 ASCII**：换行能伪造出新的 SIP 头（头注入），中文等非 ASCII 不合规。中文/JSON 请先
+  `encodeURIComponent` / base64，平台侧解回来。写错了会在红字行给中文提示
+  （`helpers.ts` 的 `normalizeUserdata` 先拦一道）；SDK 那边只回错误码 `CALL_INVALID_USERDATA`。
+- 留空（或纯空白）＝**不带这个头**，与旧版一致。
+- 页面侧读不到这个值（SDK 不暴露 SIP 头）：要核对只能看 `SIP` 页的 `INVITE` 原文，或平台侧收到的报文。
+- 依赖 `@16x/webphone-sdk` ≥ 3.1.5（`package.json` 已锁 `^3.1.5`）。
 
 ## 接口链路（默认形态：会话由服务端拼好）
 
@@ -103,6 +124,14 @@ dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转�
 没有反代时签入会卡在「获取坐席账号失败」。
 
 ## 已知环境行为
+
+### 平台不回 ACK 时，通话会在 32 秒后被拆掉
+
+有些平台（或中间的 SBC）收到 200 OK 之后**不回 ACK**。JsSIP 会一直重发 200 OK 等它，
+**32 秒还没等到就自己结束这通电话**（`NO_ACK`）：表现是「聊到一半突然断」，日志里一条 `呼叫结束`，
+`SIP` 面板里搜不到 `ACK`。这是平台侧的握手缺失，页面/SDK 不能替对端回 ACK —— 要在平台/SBC 侧补齐。
+
+页面的状态标签**不受它影响**：SDK 3.1.7 起 `active`（「通话中」）由**媒体连接**驱动，不再依赖 ACK。
 
 平台在**每次注册完成后的首个外呼**会回 `480 Temporarily Unavailable`（带 `Reason: Q.850;cause=16;text="NORMAL_CLEARING"`，即对端振铃前被正常清除），几秒内自愈。页面遇到这类暂时性失败（`call.failed` 且错误里含 480 / 超时 / 网络类）会按「首次失败」起算的 1.5s / 3s / 6s 三个时间点自动重拨：**额度按每次签入记账，一轮最多 3 次**，重拨自己再失败既不会重置次数也不会重新计时；某一路接通、退签、或额度用完即停止；已经有一路在响或在通话时该时间点跳过、后面的照走；用户手动拨号会取消当前链条。节奏与计数在 `src/lib/callRetry.ts`（有单测），页面只负责日志与「拨哪儿」。**根因在平台侧**，要彻底解决需平台方查同一次签入里失败/成功两条 INVITE 的 Call-ID。
 

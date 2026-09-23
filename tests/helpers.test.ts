@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prefixExtension, shortExtension, validateApiHost, validateSipWs } from "../src/lib/helpers.ts";
+import { normalizeUserdata, prefixExtension, shortExtension, validateApiHost, validateSipWs } from "../src/lib/helpers.ts";
 
 test("API 主机必须由用户填写（留空时报错，不替你猜环境）", () => {
   assert.throws(() => validateApiHost(""), /API 主机/);
@@ -47,6 +47,17 @@ test("内呼把企业前缀拼在号码前（与参考实现 insideCall 一致�
   assert.equal(prefixExtension("1002", ""), "1002");
   assert.equal(prefixExtension(" 1002 ", " p "), "p1002");
   assert.equal(prefixExtension("", "p"), "");
+});
+
+test("自定义参数（userdata）：只放行可见 ASCII，其余给中文提示", () => {
+  // 空值＝不带这个头（与 SDK 一致）
+  assert.equal(normalizeUserdata(""), "");
+  assert.equal(normalizeUserdata("   "), "");
+  // 首尾空白去掉再发
+  assert.equal(normalizeUserdata("  tenant=acme;agent=7  "), "tenant=acme;agent=7");
+  // 换行能伪造 SIP 头，必须拦掉；中文/非 ASCII 也不合规
+  assert.throws(() => normalizeUserdata("a\r\nX-Evil: 1"), /可见 ASCII/);
+  assert.throws(() => normalizeUserdata("客户=张三"), /可见 ASCII/);
 });
 
 test("显示分机去掉 customerPrefix（与参考页 shortExtension 一致）", () => {

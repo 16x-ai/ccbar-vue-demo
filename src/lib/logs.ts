@@ -64,6 +64,51 @@ export const connectionStatus: Record<ConnectionState | "registered", { text: st
     failed: { text: "注册失败", tone: "unreg" },
   };
 
+// 失败提示：老 ccbar 的提示都是中文（`if (data.originator !== 'local') setError('呼叫失败')`），
+// 不把 SDK 的错误码丢给用户 —— CCBarError 的 message 就是错误码，直接显示在红字行没人看得懂。
+// 错误码本身仍然留在日志里（showError 双写：红字行给中文、日志给原文）。
+export const errorText: Record<string, string> = {
+  CALL_OPERATION_NOT_ALLOWED: "呼叫失败",
+  CALL_INVALID_DESTINATION: "号码格式不正确",
+  CALL_REJECTED: "对方拒接",
+  CALL_BUSY: "对方忙",
+  CALL_ALREADY_EXISTS: "已有通话在进行",
+  CALL_NOT_CONNECTED: "话机未连接，请先签入",
+  MEDIA_PERMISSION_DENIED: "麦克风权限被拒绝",
+  MEDIA_DEVICE_NOT_FOUND: "找不到麦克风设备",
+  MEDIA_DEVICE_IN_USE: "麦克风被其它程序占用",
+  MEDIA_PLAYBACK_BLOCKED: "浏览器拦截了声音播放",
+  NETWORK_OFFLINE: "网络已断开",
+  NETWORK_TIMEOUT: "网络超时",
+  SIP_WS_UNAVAILABLE: "软电话连接不可用",
+  REGISTRATION_FAILED: "注册失败",
+  REGISTRATION_REJECTED: "注册被拒绝",
+  CAPABILITY_NOT_SUPPORTED: "当前不支持该操作",
+  H5_BACKGROUND_NOT_SUPPORTED: "后台不支持外呼",
+  AUTH_TOKEN_EXPIRED: "会话已过期，请重新签入",
+  AUTH_TOKEN_UNAVAILABLE: "取不到会话，请重新签入",
+  SDK_INTERNAL_ERROR: "SDK 内部错误",
+  SDK_ALREADY_DISPOSED: "SDK 已销毁，请刷新页面",
+};
+
+/** 给用户看的文案：错误码换成中文；已经是中文的（例如「获取坐席账号失败」）原样返回 */
+export function messageText(message: string): string {
+  const text = String(message ?? "").trim();
+  return errorText[text] || text;
+}
+
+/**
+ * 这通呼叫是不是「本机自己结束的」（挂断 / 拒接 / 振铃中取消）。
+ * JsSIP 把本机取消也归到 failed 事件上（cause.originator === 'local'），
+ * 老 ccbar 就是靠它区分「自己挂的」和「真失败」：只有后者才提示「呼叫失败」。
+ */
+export function isLocalFailure(value: unknown, depth = 0): boolean {
+  if (value == null || depth > 3 || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.originator === "local") return true;
+  return isLocalFailure(record.cause, depth + 1) || isLocalFailure(record.error, depth + 1);
+}
+
 // 参考页只对 JSON 分支打码；本页的会话票据/软电话 WSS 自带 token，字符串也要打
 const TOKEN_RE = /([?&]token=)[^&"]*/gi;
 

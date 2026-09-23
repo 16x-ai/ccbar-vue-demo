@@ -15,12 +15,14 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions } from "@16x/webphone-sdk";
 import { createCallRetry } from "./callRetry";
-import { prefixExtension, shortExtension } from "./helpers";
+import { normalizeUserdata, prefixExtension, shortExtension } from "./helpers";
 import {
   agentStatus,
   callStatus,
   connectionStatus,
+  isLocalFailure,
   isTemporarySipFailure,
+  messageText,
   sipEventDetail,
   stringifyLog,
   timeStamp,
@@ -55,6 +57,17 @@ const OUTBOUND_FAILURE_WINDOW_MS = 60_000;
 // 真正「在响 / 在通话」的状态：这时候不插自动重拨。
 // new / dialing 不算 —— 那可能正是重拨自己刚拨出去的那一路。
 const LIVE_CALL_STATES: readonly CallState[] = ["ringing", "connecting", "active", "held"];
+
+// 自定义参数：外呼 / 内呼时随 INVITE 带上 X-User-Data 头，由平台/服务端从 SIP 报文里读
+//（页面侧读不到 —— SDK 不暴露 SIP 头）。**改这里就行**：每个接入方要传的内容不一样，
+// 所以不做成设置项。
+//
+//   留空      = 不带这个头（默认）
+//   只能可见 ASCII —— 换行会构成 SIP 头注入，中文等非 ASCII 不合规。
+//              要传中文/JSON 就先编码，平台侧解回来：encodeURIComponent(JSON.stringify(ctx))
+//
+// 需要「同一页面上按通话传不同参数」时，把它改成函数或给 dial 加参数即可。
+const USERDATA = "";
 
 // SIP 保活间隔（秒）。平台侧的注册有效期是 600 秒，这里也设 600：
 // 等于不再额外发心跳，只由 JsSIP 在注册到期前续一次（约每 10 分钟一个 REGISTER）。
@@ -116,6 +129,8 @@ export function usePhone() {
   /** 平台认的坐席账号（取回会话后才知道，可能带企业前缀）；置忙 / 退签要用它 */
   let seatAccount = config.extension;
   let activeCallId = "";
+  /** 上一次记过的通话快照：只在变化时写日志（见 refreshCallState） */
+  let lastCallSnapshot = "";
 
   // ---------- 日志 ----------
   function appendPanelLog(panel: LogPanel, level: LogLevel, source: string, message: unknown) {
@@ -150,7 +165,8 @@ export function usePhone() {
       clearError();
       return;
     }
-    feedback.value = text;
+    // 红字行给人看（错误码换成中文，见 logs.ts 的 errorText），日志里留原文给排障
+    feedback.value = messageText(text);
     appendFlowLog("error", "ccbar", text);
   }
 
@@ -175,6 +191,19 @@ export function usePhone() {
       active ?? calls.find((call) => call.state !== "ended" && call.state !== "failed");
     activeCallId = target?.id ?? "";
     callState.value = target ? target.state : "idle";
+
+    // 排障：标签只显示上面这一路的状态。出问题时（内呼的回调腿接通了、拨出去那一腿还挂着 ringing，
+    // 或者某一路的状态压根没往前走）光看标签不知道说的是哪一路，所以把 SDK 里此刻的通话列表
+    // 一并记下来 —— 只在快照变化时写一行，不刷屏。
+    const view = `通话列表 ${stringifyLog({
+      active: active?.id ?? null,
+      target: target?.id ?? null,
+      calls: calls.map((call) => `${call.id} ${call.state} ${call.destination}`),
+    })}`;
+    if (view !== lastCallSnapshot) {
+      lastCallSnapshot = view;
+      appendFlowLog("info", "call", view);
+    }
   }
   function currentCall(): CCBarCall | undefined {
     return client.value?.getActiveCall() ?? client.value?.getCalls().find((call) => call.id === activeCallId);
@@ -279,18 +308,23 @@ export function usePhone() {
   async function startCall(destination: string, extensionCall = false) {
     const instance = client.value;
     if (!instance) throw new Error("请先签入");
+    // 常量先过一道校验：写错了（中文/换行）就在红字行给中文提示，别把 SDK 的错误码丢出来
+    const data = normalizeUserdata(USERDATA);
     const target = extensionCall && legacyPlatform ? prefixExtension(destination, customerPrefix.value) : destination;
     // 记下这一通是谁、什么时候拨的：call.failed 来得太晚就不认（可能是别的通话失败了）
     lastDialTarget = target;
     lastDialAt = Date.now();
     const note = extensionCall && target !== destination ? `（拼前缀 ${customerPrefix.value}）` : "";
+    const withData = data ? `（X-User-Data: ${data}）` : "";
     appendFlowLog(
       "info",
       "sip",
-      `${extensionCall ? "内呼" : "外呼"} ${target}${note}（话机连接=${connection.value}）`,
+      `${extensionCall ? "内呼" : "外呼"} ${target}${note}${withData}（话机连接=${connection.value}）`,
     );
     await instance.dial(
-      extensionCall && !legacyPlatform ? { destination, type: "extension" } : { destination: target },
+      extensionCall && !legacyPlatform
+        ? { destination, type: "extension", ...(data ? { userdata: data } : {}) }
+        : { destination: target, ...(data ? { userdata: data } : {}) },
     );
   }
 
@@ -423,21 +457,30 @@ export function usePhone() {
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
-        appendFlowLog("error", "call", `呼叫失败 connection=${connection.value} ${sipEventDetail(event)}`);
+        // 本机自己结束的（挂断 / 拒接 / 振铃中取消）不算失败：老 ccbar 就是这个规则
+        //（`if (data.originator !== 'local') setError('呼叫失败')`）——点了挂断却弹一句
+        // 「呼叫失败 / CALL_OPERATION_NOT_ALLOWED」就是这么来的。
+        const local = isLocalFailure(event.error);
+        if (local) {
+          appendFlowLog("info", "call", `本机结束呼叫 ${sipEventDetail(event)}`);
+        } else {
+          appendFlowLog("error", "call", `呼叫失败 connection=${connection.value} ${sipEventDetail(event)}`);
+        }
         // 只有「UA 的 WebSocket 已经没了」这一种情况才提示重签（JsSIP 抛 InvalidStateError/NotConnected）；
         // 平台回的 480 之类也会被 SDK 归到这个错误码上，不能一概而论
         const cause = (event.error as { cause?: { name?: string; message?: string } }).cause;
         const transportGone = /InvalidStateError|NotConnected|not connected/i.test(
           `${cause?.name ?? ""} ${cause?.message ?? ""}`,
         );
-        if (event.error.code === "CALL_OPERATION_NOT_ALLOWED" && transportGone) {
+        if (!local && event.error.code === "CALL_OPERATION_NOT_ALLOWED" && transportGone) {
           appendFlowLog("warn", "sip", "话机连接可能已断开：请点退签再签入后重试");
         }
         removeIncoming(event.callId);
-        showError(event.error.message);
+        if (!local) showError(event.error.message);
         // 注册后的第一次外呼碰到「暂时不可用」：交给首通保护兜底。
-        // 额度按每次签入算（见 lib/callRetry.ts），所以这里可以放心对每次失败都调一次 arm。
-        if (isTemporarySipFailure(event.error) && Date.now() - lastDialAt < OUTBOUND_FAILURE_WINDOW_MS) {
+        // 额度按每次签入算（见 lib/callRetry.ts），所以这里可以放心对每次失败都调一次 arm；
+        // 本机取消的不算（老 ccbar 的重拨判定同样排除 originator=local）。
+        if (!local && isTemporarySipFailure(event.error) && Date.now() - lastDialAt < OUTBOUND_FAILURE_WINDOW_MS) {
           retry.arm(lastDialTarget);
         }
         refreshCallState();

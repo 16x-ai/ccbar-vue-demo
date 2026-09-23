@@ -54,3 +54,16 @@ export function prefixExtension(number: string, prefix: string): string {
   if (!head || !value || value.startsWith(head)) return value;
   return `${head}${value}`;
 }
+
+// 自定义参数（userdata）：会随 INVITE 带上 X-User-Data 头，由平台/服务端读。
+// 限制与 SDK 一致（只能可见 ASCII），页面先拦一道是为了给中文提示 ——
+// SDK 那边只回错误码 CALL_INVALID_USERDATA，直接显示在红字行上看不懂。
+export const USERDATA_HINT =
+  "自定义参数只能是可见 ASCII（不能有换行或中文）；中文/JSON 请先 encodeURIComponent 再传";
+
+export function normalizeUserdata(value: string): string {
+  const text = String(value ?? "").trim();
+  if (text === "") return "";
+  if (/[^\x20-\x7E]/.test(text)) throw new Error(USERDATA_HINT);
+  return text;
+}

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCallRetry } from "../src/lib/callRetry.ts";
+import { CALL_RETRY_DELAYS, createCallRetry } from "../src/lib/callRetry.ts";
+
+/** 多档时间点不是默认行为（默认只有一档，对齐老 ccbar），用例里显式传 */
+const MULTI_DELAYS = [1500, 3000, 6000] as const;
 
 type FakeTimer = { id: number; at: number; fn: () => void };
 
@@ -47,13 +50,40 @@ function fakeClock() {
   };
 }
 
-test("注册后的首次外呼失败：按 1.5s / 3s / 6s 各重拨一次，然后收手", () => {
+test("默认只重拨一次（对齐老 ccbar：800ms 后一次，一个签入周期就这一次）", () => {
   const clock = fakeClock();
   const dialed: number[] = [];
   const events: string[] = [];
   const retry = createCallRetry({
     attempt: () => dialed.push(clock.timers.now()),
     onEvent: (event) => events.push(event.type),
+    timers: clock.timers,
+  });
+
+  assert.deepEqual(CALL_RETRY_DELAYS, [800], "默认时间点就一档");
+
+  retry.reset();
+  retry.arm("A");
+  clock.fire();
+  assert.deepEqual(dialed, [800], "只重拨一次，且是 800ms 后");
+  assert.deepEqual(events, ["armed", "attempt"]);
+  assert.equal(retry.used, 1);
+
+  // 重拨又失败：额度已用完，不再拨（下一次签入才重新记账）
+  retry.arm("A");
+  clock.fire();
+  assert.equal(dialed.length, 1);
+  assert.equal(events.filter((type) => type === "exhausted").length, 1);
+});
+
+test("配了多档时间点（可选）时：按 1.5s / 3s / 6s 各重拨一次，然后收手", () => {
+  const clock = fakeClock();
+  const dialed: number[] = [];
+  const events: string[] = [];
+  const retry = createCallRetry({
+    attempt: () => dialed.push(clock.timers.now()),
+    onEvent: (event) => events.push(event.type),
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 
@@ -81,6 +111,7 @@ test("重拨自己又失败：不会把进度清零（老实现会无限重拨�
       retry.arm("17371432374");
     },
     onEvent: (event) => events.push(event.type),
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 
@@ -108,6 +139,7 @@ test("额度按「每次签入」记账：中途取消再武装也不会超支",
   const dialed: number[] = [];
   const retry = createCallRetry({
     attempt: () => dialed.push(clock.timers.now()),
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 
@@ -136,6 +168,7 @@ test("已有呼叫在响：跳过该时间点，但不占额度", () => {
     onEvent: (event) => {
       if (event.type === "skipped") skipped.push(event.attempt);
     },
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 
@@ -153,6 +186,7 @@ test("接通后收手：finish() 之后不再兜底，reset() 重新记账", () 
     attempt: () => {
       dials += 1;
     },
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 
@@ -174,6 +208,7 @@ test("浏览器挂起后再回来：只把剩下的时间点走完，不会连�
   const dialed: number[] = [];
   const retry = createCallRetry({
     attempt: () => dialed.push(clock.timers.now()),
+    delays: MULTI_DELAYS,
     timers: clock.timers,
   });
 

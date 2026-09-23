@@ -213,8 +213,8 @@ export function usePhone() {
   }
 
   // ---------- 首通保护：注册后第一个外呼回 480 时兜底重拨 ----------
-  // 节奏与次数都在 lib/callRetry.ts（那里有单测）：每次签入最多 3 次、
-  // 链条自己失败不会把进度清零、时间点从第一次失败起算。
+  // 节奏与次数都在 lib/callRetry.ts（那里有单测）：默认 0.8s 后重拨一次、
+  // 每次签入只这一次、链条自己失败不会把进度清零。
   // 这里只负责把事件翻译成日志，以及「拨哪儿、什么时候不拨」。
   const retry = createCallRetry({
     // 重拨走 startCall（不经过 dial），否则会把正在跑的链条自己取消掉
@@ -226,19 +226,23 @@ export function usePhone() {
       (client.value?.getCalls() ?? []).some((call) => LIVE_CALL_STATES.includes(call.state)),
     onEvent: (event) => {
       switch (event.type) {
-        case "armed":
+        case "armed": {
+          // 文案对齐老 ccbar 的「首通 480 Temporarily Unavailable，自动重拨一次」，
+          // 时间点与额度按实际配置写出来（默认只有一档：0.8s）
+          const times = event.delays.map((ms) => `${ms / 1000}s`).join(" / ");
+          const quota = event.delays.length === 1 ? "只重拨一次" : `最多 ${event.delays.length} 次`;
           appendFlowLog(
             "warn",
             "sip",
-            `呼叫暂时不可用，${event.delays.map((ms) => `${ms / 1000}s`).join(" / ")} 处自动重拨` +
-              `（本次签入最多 ${event.delays.length} 次）`,
+            `首通 480 Temporarily Unavailable，${times} 后自动重拨（本次签入${quota}）`,
           );
           break;
+        }
         case "attempt":
-          appendFlowLog("warn", "sip", `自动重拨（第 ${event.attempt} 次）${event.target}`);
+          appendFlowLog("warn", "sip", `自动重拨 ${event.target}`);
           break;
         case "skipped":
-          appendFlowLog("info", "sip", `跳过第 ${event.attempt} 次自动重拨：已有呼叫在响或在通话`);
+          appendFlowLog("info", "sip", "已有呼叫在响或在通话，跳过自动重拨");
           break;
         case "exhausted":
           appendFlowLog("warn", "sip", "自动重拨已用完，不再兜底（下次签入才会重新记账）");

@@ -1,20 +1,27 @@
 /**
- * 首通保护：平台在每次注册完成后的第一个外呼会回 480（Q.850 cause=16），这里按固定时间点自动重拨兜底。
+ * 首通保护：平台在每次注册完成后的第一个外呼会回 480（Q.850 cause=16），这里自动重拨一次兜底。
+ * 默认行为对齐老 ccbar（`_shouldRetryCall` / `_retryLastCall`）：**一个签入周期只重拨一次、800ms 后**。
  *
  * 这个文件只回答「什么时候该拨」：不含文案、不碰 SDK（真正拨号由调用方注入），
  * 所以可以直接用 node --test 覆盖（tests/call-retry.test.ts）。
  *
  * 三条约束，少一条就会变成「无限重拨」—— 老实现（写在 usePhone 里那版）正好三条都踩了：
  *   1. 额度按「每次签入」记账：一轮最多拨 delays.length 次，用完就停到下次 reset()。
- *      老实现每次失败都重置 attempt，于是永远停在 1.5 秒那一档，也永远不会收手。
+ *      老实现每次失败都重置 attempt，于是永远停在第一个时间点那一档，也永远不会收手。
  *   2. 已经有链条在跑时，链自己失败的回调不会武装新链（running 挡住）。
  *      否则每次重拨失败都把进度清零，次数也回到 0。
  *   3. 时间点从「第一次失败」起算，startedAt / index 只在本模块里改；
  *      调用方的 dial() 碰不到它们，不会算出 0 延迟后连环重拨。
  */
 
-/** 重拨的时间点（毫秒）：从第一次失败起算，不是从上次重拨起算 */
-export const CALL_RETRY_DELAYS: readonly number[] = [1500, 3000, 6000];
+/**
+ * 重拨的时间点（毫秒）：从第一次失败起算，不是从上次重拨起算。
+ *
+ * 默认**只重拨一次**（800ms 后），对齐老 ccbar 的
+ * 「首通 480 Temporarily Unavailable，自动重拨一次」（`_retryLastCall` 的 800ms + `!this._callRetried`）。
+ * 需要多档时间点（例如 1.5s / 3s / 6s 连试三次）时，用 options.delays 显式传。
+ */
+export const CALL_RETRY_DELAYS: readonly number[] = [800];
 
 /** 交给调用方翻译成日志/提示 */
 export type CallRetryEvent =

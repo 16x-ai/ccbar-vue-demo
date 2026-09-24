@@ -86,8 +86,11 @@ test("坐席账号：fs token 放在 Authorization 上打 seat/account/get", asy
   }
 });
 
-test("拼出 SDK 能用的会话：注册密码是解出来的明文", async () => {
+test("拼出 SDK 能用的会话：注册密码原样转发平台密文（解密交给 SDK ≥3.1.10）", async () => {
   const originalFetch = globalThis.fetch;
+  // 服务端不再解密：平台的 password 原样进 registerTicket，SDK 在会话入口用内置 key/iv 解
+  // （见《前端接入文档》§7.1）。这里断言「原样转发」，解密结果由 SDK 侧保证。
+  const seatPassword = encryptLikeLegacy("sip-password");
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     if (String(input).endsWith("/openapi/v1/token/fs"))
       return jsonResponse({ code: 0, data: { token: "fs-token", expires: 600 } });
@@ -95,7 +98,7 @@ test("拼出 SDK 能用的会话：注册密码是解出来的明文", async () 
       code: 0,
       data: {
         username: "p8001",
-        password: encryptLikeLegacy("sip-password"),
+        password: seatPassword,
         domain: "sip.example.test",
         wssPort: 7443,
         customerPrefix: "p",
@@ -114,7 +117,7 @@ test("拼出 SDK 能用的会话：注册密码是解出来的明文", async () 
     })) as Record<string, any>;
 
     assert.equal(session.sip.uri, "sip:p8001@sip.example.test");
-    assert.equal(session.sip.registerTicket, "sip-password");
+    assert.equal(session.sip.registerTicket, seatPassword);
     assert.equal(session.transport.wssUrl, "wss://sip.example.test:7443/api/fs/sip-ws?token=fs-token");
     // 旧平台的凭据在 URL 上，没有 ticket 子协议
     assert.equal(session.transport.ticket, "");

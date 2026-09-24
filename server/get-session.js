@@ -153,7 +153,8 @@ export async function getLegacySession({
   });
   const username = String(seat.username || seat.account || extension || "").trim();
   if (!username) throw new Error("坐席账号里没有 username");
-  const password = await decryptSeatPassword(seat.password);
+  // const password = await decryptSeatPassword(seat.password);
+  const password = seat.password
   if (!password) throw new Error("坐席账号里的 password 解密后为空");
   // 排障用：只打「长度 + 加盐哈希前 8 位」，不打印密码本身。
   // 和参考页面控制台里的 CryptoJS.SHA256("ccbar-seat-account:" + 密码) 对比，

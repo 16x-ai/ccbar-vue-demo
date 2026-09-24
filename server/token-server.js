@@ -1,5 +1,6 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
+import { getFsToken } from "./get-token.js";
 import { getLegacySession } from "./get-session.js";
 import { setSeatStatus } from "./set-agent-status.js";
 
@@ -9,6 +10,10 @@ let listenPort = Number(process.env.TOKEN_PORT || process.env.PORT) || 3000;
 
 // 会话：走 token/fs + seat/account/get，由服务端拼出 SDK 能用的完整会话
 const SESSION_PATHS = new Set(["/get-session", "/ccbar/get-session"]);
+
+// 取 fs token：坐席状态由 SDK 从浏览器直接打平台接口，得先有票；
+// 加签要 API SECRET，所以取票仍在服务端（getFsToken 自带 120 秒缓存，连点状态不会重复取票）
+const TOKEN_PATHS = new Set(["/get-token", "/ccbar/get-token"]);
 
 // 设置坐席状态（空闲 / 置忙 / 休息 / 退签）→ 平台的 seats/set-status
 const AGENT_STATUS_PATHS = new Set(["/set-agent-status", "/ccbar/set-agent-status"]);
@@ -94,6 +99,23 @@ export const server = http.createServer(async (req, res) => {
         extension: body.extension,
         sipWs: body.sipWs,
         registerExpires: body.registerExpires,
+      }));
+    } catch (error) {
+      sendJson(req, res, 500, { code: -1, message: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && TOKEN_PATHS.has(urlPath)) {
+    try {
+      const body = await readBody(req, MAX_BODY);
+      requireGatewayConfig(body);
+      // 直接把平台那层信封 { code, data: { token, expires } } 原样回给页面里跑着的 SDK
+      sendJson(req, res, 200, await getFsToken({
+        extension: body.extension,
+        host: body.host,
+        appKey: body.appKey,
+        appSecret: body.appSecret,
       }));
     } catch (error) {
       sendJson(req, res, 500, { code: -1, message: error.message });

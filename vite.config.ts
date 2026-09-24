@@ -38,10 +38,11 @@ function forwardHeaders(source: Record<string, string | string[] | undefined>) {
 }
 
 function tokenProxyPlugin(tokenOrigin: string): Plugin {
-  // /get-session：会话（坐席账号 + SIP 密码）；/set-agent-status：坐席状态
+  // /get-session：会话（坐席账号 + SIP 密码）；/get-token：SDK 从浏览器打平台接口前换的 fs token
   const prefixes = [
     "/ccbar/",
     "/get-session",
+    "/get-token",
     "/set-agent-status",
   ];
   return {

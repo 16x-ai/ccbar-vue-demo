@@ -26,12 +26,8 @@ import {
   timeStamp,
 } from "./logs";
 import type { AgentState, CallState, ConnectionState, LogLevel, LogLine, LogPanel } from "./logs";
-import {
-  SEAT_STATUS_TEXT,
-  createSessionProvider,
-  setSeatStatus,
-} from "./session";
-import type { SeatAccount } from "./session";
+import { createSessionProvider, setSeatStatus } from "./session";
+import type { DemoSessionProvider, SeatAccount } from "./session";
 import { createConfig, normalizeConfig, persistConfig } from "./settings";
 import type { PhoneConfig } from "./settings";
 import { enableJsSipDebug } from "./sipDebug";
@@ -101,8 +97,8 @@ export function usePhone() {
   const subscriptions: Array<() => void> = [];
   /** 坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
   const customerPrefix = ref("");
-  /** 平台认的坐席账号（取回会话后才知道，可能带企业前缀）；置忙 / 退签要用它 */
-  let seatAccount = config.extension;
+  /** 会话来源：会话由服务端拼（/get-session），坐席状态由 npm 包的实现从浏览器直接打平台接口 */
+  let sessionProvider: DemoSessionProvider | undefined;
   let activeCallId = "";
   /** 上一次记过的通话快照：只在变化时写日志（见 refreshCallState） */
   let lastCallSnapshot = "";
@@ -225,10 +221,11 @@ export function usePhone() {
     await client.value?.disconnect();
     // 与旧版一致：退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
-    const [status, reason] = SEAT_STATUS_TEXT.offline;
-    void setSeatStatus(config, seatAccount, status, reason, appendFlowLog).catch((error: unknown) => {
-      appendFlowLog("warn", "seat", `置离线失败：${error instanceof Error ? error.message : error}`);
-    });
+    if (sessionProvider) {
+      void setSeatStatus(sessionProvider, "offline", appendFlowLog).catch((error: unknown) => {
+        appendFlowLog("warn", "seat", `置离线失败：${error instanceof Error ? error.message : error}`);
+      });
+    }
     connection.value = "offline";
     agent.value = "offline";
     callState.value = "idle";
@@ -288,7 +285,7 @@ export function usePhone() {
     await call?.reject({ reason: "已拒接" });
     removeIncoming(callId);
   }
-  /** 空闲 / 休息：走 SDK 的 setAgentStatus（最终由会话来源落到平台接口） */
+  /** 空闲 / 休息：走 SDK 的 setAgentStatus（平台请求由 npm 包的实现发出） */
   async function setAgent(status: "available" | "break") {
     loading.value = "正在设置坐席状态…";
     try {
@@ -300,14 +297,17 @@ export function usePhone() {
   }
 
   /**
-   * 置忙：SDK 的 setAgentStatus 只有 空闲 / 休息 / 离线，没有「忙碌」，
-   * 所以页面直接调服务端的坐席状态接口（平台侧是 On Break + reason=忙碌）。
+   * 置忙：平台上也是 On Break，只是 reason 用「忙碌」。
+   * SDK 的 client.setAgentStatus 固定不带 reason，所以这里直接调会话来源（npm 包里那套实现）。
    */
   async function setBusy() {
-    const [status, reason] = SEAT_STATUS_TEXT.busy;
+    if (!sessionProvider) {
+      showError("还没签入：先签入再置忙");
+      return;
+    }
     loading.value = "正在设置坐席状态…";
     try {
-      await setSeatStatus(config, seatAccount, status, reason, appendFlowLog);
+      await setSeatStatus(sessionProvider, "busy", appendFlowLog);
     } finally {
       loading.value = "";
     }
@@ -417,16 +417,16 @@ export function usePhone() {
       sharedWorker: { enabled: false, fallback: "single-tab" },
     };
     // 会话由我们自己的服务端拼好（server/get-session.js）
-    const provider = createSessionProvider(config, appendFlowLog, (account: SeatAccount) => {
+    sessionProvider = createSessionProvider(config, appendFlowLog, (account: SeatAccount) => {
       customerPrefix.value = String(account.customerPrefix || "");
-      seatAccount = String(account.username || seatAccount);
       appendFlowLog(
         "ok",
         "seat",
         `坐席账号就绪 ${stringifyLog({ username: account.username, prefix: account.customerPrefix || "-" })}`,
       );
     });
-    return new CCBarClient({ ...options, sessionProvider: provider });
+    
+    return new CCBarClient({ ...options, sessionProvider });
   }
 
   function mount() {

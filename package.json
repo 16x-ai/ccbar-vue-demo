@@ -17,7 +17,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@16x/webphone-sdk": "^4.0.0",
+    "@16x/webphone-sdk": "^4.1.0",
     "vue": "^3.5.42"
   },
   "devDependencies": {

@@ -1,17 +1,16 @@
 import crypto from "node:crypto";
+import { decryptSipPassword } from "@16x/webphone-sdk/legacy";
 import { getFsToken } from "./get-token.js";
 
 // 旧平台（vxapi / call-ng 这一套）拿会话的三步，全部对齐参考实现 D:\code\xcall\ccbar\index.html：
 //   1) POST {API主机}/openapi/v1/token/fs   → { token, expires }（已有 getToken 负责加签）
 //   2) POST {API主机}/openapi/token/v1/seat/account/get（Authorization 带上面的 token）→ 坐席账号
-//   3) AES-128-CBC/Pkcs7 解出 SIP 密码，再拼出 WSS 地址（?token=）给 SDK 注册
+//   3) AES-128-CBC/Pkcs7 解出 SIP 密码（用 SDK 的 decryptSipPassword），再拼出 WSS 地址（?token=）给 SDK 注册
 // 放在服务端做：浏览器不用管跨域，AES 密钥也不下发到页面。
 
 const SEAT_ACCOUNT_PATH_DEFAULT = "/openapi/token/v1/seat/account/get";
 const SIP_WS_PATH_DEFAULT = "/api/fs/sip-ws";
 const SIP_WS_PORT_DEFAULT = 7443;
-const AES_KEY = "q7X4p6MvK1z8Lb3A"; // 16 字节
-const AES_IV = "W9e2T4mN0aQ7Ru6C"; // 16 字节
 const SESSION_TTL_FALLBACK = 600;
 const ICE_PORT_DEFAULT = 3478;
 // 提前这么久换票：SDK 自己还会在会话到期前 60 秒刷新，两层加起来留够余量
@@ -37,19 +36,16 @@ export function fingerprint(value) {
     .slice(0, 8);
 }
 
-// CryptoJS.AES.decrypt(密文, key, {iv, mode: CBC, padding: Pkcs7})：字符串密文按 Base64 处理
-export function decryptSeatPassword(encrypted) {
-  if (!encrypted) return "";
-  const decipher = crypto.createDecipheriv(
-    "aes-128-cbc",
-    Buffer.from(AES_KEY, "utf8"),
-    Buffer.from(AES_IV, "utf8"),
-  );
-  const plain = Buffer.concat([
-    decipher.update(Buffer.from(String(encrypted), "base64")),
-    decipher.final(),
-  ]);
-  return plain.toString("utf8");
+// 解密交给 SDK（@16x/webphone-sdk/legacy 的 decryptSipPassword）：
+// 等价于 CryptoJS.AES.decrypt(密文, key, { iv, mode: CBC, padding: Pkcs7 })，密文按 Base64 处理；
+// 老平台的固定 key/iv 已内置在 SDK 里，环境不同时可以用第二个参数 { key, iv } 覆盖。
+export async function decryptSeatPassword(encrypted) {
+  try {
+    return await decryptSipPassword(encrypted);
+  } catch (error) {
+    // SDK 的错误码在 message 上、可读原因在 cause 上，这里把原因抛给页面
+    throw new Error(error?.cause ? String(error.cause) : String(error?.message ?? error));
+  }
 }
 
 // 参考页 buildSipWsUrl：留空按账号的 domain 拼，配了就当基地址（可以只写 /path），最后统一挂 ?token=
@@ -157,7 +153,7 @@ export async function getLegacySession({
   });
   const username = String(seat.username || seat.account || extension || "").trim();
   if (!username) throw new Error("坐席账号里没有 username");
-  const password = decryptSeatPassword(seat.password);
+  const password = await decryptSeatPassword(seat.password);
   if (!password) throw new Error("坐席账号里的 password 解密后为空");
   // 排障用：只打「长度 + 加盐哈希前 8 位」，不打印密码本身。
   // 和参考页面控制台里的 CryptoJS.SHA256("ccbar-seat-account:" + 密码) 对比，

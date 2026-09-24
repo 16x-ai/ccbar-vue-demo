@@ -28,10 +28,11 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
-test("解开坐席密码：AES-128-CBC/Pkcs7，密文是 Base64", () => {
+test("解开坐席密码：AES-128-CBC/Pkcs7，密文是 Base64（解密走 SDK 的 decryptSipPassword）", async () => {
   const encrypted = encryptLikeLegacy("s3cret-pwd");
-  assert.equal(decryptSeatPassword(encrypted), "s3cret-pwd");
-  assert.equal(decryptSeatPassword(""), "");
+  assert.equal(await decryptSeatPassword(encrypted), "s3cret-pwd");
+  // 空密文：SDK 的实现直接报错，可读原因在 message 上
+  await assert.rejects(decryptSeatPassword(""), /为空/);
 });
 
 test("WSS 地址：挂 ?token=，相对路径按 API 主机解析", () => {

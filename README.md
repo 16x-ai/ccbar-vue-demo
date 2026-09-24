@@ -69,7 +69,7 @@ D:\code\xcall\ccbar\index.html 的顺序把会话拼好：
 
 1. `POST {API主机}/openapi/v1/token/fs`（X-Ca + HMAC-SHA256 签名）→ `{ token, expires }`
 2. `POST {API主机}/openapi/token/v1/seat/account/get`，`Authorization: <上面那个 token>` → 坐席账号
-3. AES-128-CBC/Pkcs7 解出 SIP 密码（密钥只在服务端）→ 拼 `wss://…/api/fs/sip-ws?token=…`
+3. AES-128-CBC/Pkcs7 解出 SIP 密码（调 SDK 的 `decryptSipPassword`，密钥只在服务端）→ 拼 `wss://…/api/fs/sip-ws?token=…`
 4. 返回 SDK 的 `WebPhoneSession`，页面用 SDK 的 `sessionProvider` 交给 SDK（SDK 3.1.0 起支持）
 
 坐席状态走 `POST /set-agent-status` → `POST {API主机}/openapi/token/v1/seats/set-status`，
@@ -100,8 +100,8 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 最省事的做法：把 `/get-session` 反代到你们自己的服务，按同一契约返回会话即可 —— 请求体
 `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`（换成你们后端后，后四项可以都不要，
 分机与凭据由服务端登录态决定），响应是一份 `WebPhoneSession`（字段见 `server/get-session.js` 末尾）。
-页面里的 KEY / SECRET 那时也可以留空（就不会再随请求发出去）。本仓库 `server/get-session.js` +
-`server/get-token.js` 那套签名与解密代码可以直接抄。
+页面里的 KEY / SECRET 那时也可以留空（就不会再随请求发出去）。本仓库 `server/get-token.js` 的签名、
+`server/get-session.js` 的拼装可以直接抄；解密那一步调的是 SDK 的 `decryptSipPassword`（`@16x/webphone-sdk/legacy`）。
 
 ## 部署注意（重要）
 

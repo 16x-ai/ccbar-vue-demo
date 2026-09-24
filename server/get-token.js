@@ -6,9 +6,6 @@ const DEFAULT_HOST = process.env.CC_API_HOST || "";
 
 // 平台接口路径可配：不同环境/版本可能挂在别的路径上（.env 或 shell 环境变量）。
 // 注意要在调用时读 —— .env 由 dev.mjs 在 import 之后才加载，写成模块级常量会读不到。
-function webphoneTokenPath() {
-  return process.env.CC_WEBPHONE_TOKEN_PATH || "/openapi/v1/webphone/tokens";
-}
 function fsTokenPath() {
   return process.env.CC_FS_TOKEN_PATH || "/openapi/v1/token/fs";
 }
@@ -81,35 +78,6 @@ export function md5(value) {
 
 export function hmacSha256(value, appSecret) {
   return crypto.createHmac("sha256", appSecret).update(value, "utf8").digest("hex");
-}
-
-export function webPhoneBodyDigest(body) {
-  return crypto.createHash("sha256").update(body, "utf8").digest("hex");
-}
-
-export function webPhoneCanonicalRequest(method, path, body, timestamp, nonce) {
-  return `${method.toUpperCase()}\n${path}\n${webPhoneBodyDigest(body)}\n${timestamp}\n${nonce}`;
-}
-
-export function createWebPhoneAuthentication(
-  body,
-  appKey,
-  appSecret,
-  now = Date.now(),
-  path = webphoneTokenPath(),
-) {
-  const timestamp = String(now);
-  const nonce = crypto.randomBytes(16).toString("hex");
-  return {
-    "X-Ca-Key": appKey,
-    "X-Ca-Timestamp": timestamp,
-    "X-Ca-Nonce": nonce,
-    "X-Ca-Signature": hmacSha256(
-      webPhoneCanonicalRequest("POST", path, body, timestamp, nonce),
-      appSecret,
-    ),
-    "X-Ca-Signature-Method": "HMAC-SHA256",
-  };
 }
 
 export function openAPICanonical(treeMap) {
@@ -270,60 +238,6 @@ export async function getToken({
     throw new Error(`${formatTokenError(apiUrl, response.status, result)}（POST ${apiUrl}）`);
   }
   return result;
-}
-
-export async function getWebPhoneToken({
-  extension,
-  platform = "web",
-  host,
-  appKey,
-  appSecret,
-} = {}) {
-  const resolvedKey = requireCredential(appKey, "CC_API_APP_KEY", "API KEY");
-  const resolvedSecret = requireCredential(appSecret, "CC_API_APP_SECRET", "API SECRET");
-  if (!cleanCredential(host)) throw new Error("请填写 API 主机（接口网关地址，不要填文档站）");
-  const server = assertAllowedTokenHost(migrateApiHost(host));
-  const resolvedExtension = cleanCredential(extension);
-  if (!resolvedExtension) throw new Error("分机号 extension 不能为空");
-
-  const apiPath = webphoneTokenPath();
-  const body = JSON.stringify({
-    subject: { type: "extension", extension: resolvedExtension },
-    client: { id: "ccbar-vue-demo", platform },
-  });
-  const apiUrl = `${server.protocol}://${server.host}${apiPath}`;
-  console.log(`[ccbar-webphone-token] POST ${apiUrl}`);
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      // 签名里的 path 必须和实际请求路径一致（自定义 CC_WEBPHONE_TOKEN_PATH 时尤其重要）
-      ...createWebPhoneAuthentication(body, resolvedKey, resolvedSecret, Date.now(), apiPath),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body,
-    signal: AbortSignal.timeout(20_000),
-  });
-  const responseText = await response.text();
-  let result;
-  try {
-    result = JSON.parse(responseText);
-  } catch {
-    const preview = responseText.trim().slice(0, 200);
-    throw new Error(
-      `Token 接口返回了非 JSON 响应（HTTP ${response.status}）：${preview}` +
-        `。请求地址：POST ${apiUrl}` +
-        `；请确认这是接口网关地址（不是文档站），且该环境已开通 /openapi/v1/webphone/tokens`,
-    );
-  }
-  if (!response.ok || result.code !== "OK") {
-    throw new Error(formatTokenError(apiUrl, response.status, result));
-  }
-  const data = result.data;
-  if (!data || typeof data.accessToken !== "string" || !data.accessToken.trim()) {
-    throw new Error("Token 接口没有返回 accessToken");
-  }
-  return { accessToken: data.accessToken, expiresAt: data.expiresAt, extension: resolvedExtension };
 }
 
 const isMain =

@@ -8,9 +8,9 @@
 
 ```powershell
 cd D:\code\ccbar-vue-demo
-copy .env.example .env     # 编辑 WEBPHONE_PROXY_TARGET=https://<你们的 API 主机>
+copy .env.example .env     # 可选；默认配置就能跑通本地代理
 npm install
-npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http://127.0.0.1:3000
+npm run dev                # 页面 http://127.0.0.1:5173 ；本地代理 http://127.0.0.1:3000
 ```
 
 打开页面 →「设置」填 **API 主机 / API KEY / API SECRET / 内部分机** →「保存」→「签入」。
@@ -30,11 +30,11 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；Token 代理 http:/
 
 | 操作 | 调用 |
 |---|---|
-| 签入 | `client.connect({ extension })`（内部先 `initialize()`，再取 Token、建会话、REGISTER） |
+| 签入 | `client.connect({ extension })`（内部先 `initialize()`，再取会话、REGISTER） |
 | 退签 | `client.disconnect()` |
 | 外呼 | `client.dial({ destination })` |
 | 外呼 / 内呼带自定义参数 | `client.dial({ destination, userdata })`：代码里的 `USERDATA` 常量非空时原样写进 INVITE 的 `X-User-Data` 头，由平台/服务端读。只能可见 ASCII，留空＝不带头（见下） |
-| 内呼 | `client.dial({ destination: 前缀+分机号 })`：旧平台的「内呼」就是把企业前缀（`customerPrefix`）拼在号码前，和参考实现 `insideCall` 一致 |
+| 内呼 | `client.dial({ destination: 前缀+分机号 })`：「内呼」就是把企业前缀（`customerPrefix`）拼在号码前，和参考实现 `insideCall` 一致 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上的 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })` |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `Set Agent Status`（Available / On Break+休息） |
@@ -60,9 +60,9 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
   （`helpers.ts` 的 `normalizeUserdata` 先拦一道）；SDK 那边只回错误码 `CALL_INVALID_USERDATA`。
 - 留空（或纯空白）＝**不带这个头**，与旧版一致。
 - 页面侧读不到这个值（SDK 不暴露 SIP 头）：要核对只能看 `SIP` 页的 `INVITE` 原文，或平台侧收到的报文。
-- 依赖 `@16x/webphone-sdk` ≥ 3.1.5（`package.json` 已锁 `^3.1.5`）。
+- 依赖 `@16x/webphone-sdk` ≥ 3.1.5（版本以 `package.json` 为准）。
 
-## 接口链路（默认形态：会话由服务端拼好）
+## 接口链路（会话由服务端拼好）
 
 页面只打两个同源接口（`server/token-server.js` 是本地示例）。服务端按参考页
 D:\code\xcall\ccbar\index.html 的顺序把会话拼好：
@@ -90,17 +90,11 @@ status 只有三个值：`Available`(空闲) / `On Break`(置忙 reason=忙碌�
 
 SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、只由 JsSIP 每 10 分钟续一次注册；链路上有 nginx/NAT 空闲超时（nginx 默认 60 秒）时会被静默掐断长连接，把 `VITE_SIP_KEEPALIVE=25` 打开心跳即可。
 
-### 换成新平台网关（可选）
-
-网关若部署了 `/webphone/v1/*`（新 SDK 的会话接口），构建时设 `VITE_LEGACY_PLATFORM=0` 切过去：
-页面改打同源 `/get-token` 拿 accessToken，SDK 自己请求 `/webphone/v1/sessions` 换会话。
-dev 环境需要配 `WEBPHONE_PROXY_TARGET`（Vite 的 `/webphone` 代理目标）。
-
 ### 换成你们自己的会话接口
 
 会话地址有两种改法（都不需要动 SDK 代码，和旧 ccbar.js 页面的 `TOKEN_API` 一个套路）：
 
-- **代码里改**：`src/lib/session.ts` 顶部的 `const TOKEN_API = ""`（会话地址同理，见 `sessionUrl()`）—— 留空按约定拼同源路径，填了就原样使用。
+- **代码里改**：`src/lib/session.ts` 的 `sessionUrl()` —— 留空按约定拼同源路径，填了就原样使用。
 - **部署时改**：环境变量 `VITE_SESSION_API=/your/session/path`（优先级高于常量，构建时注入）。
 
 最省事的做法：把 `/get-session` 反代到你们自己的服务，按同一契约返回会话即可 —— 请求体
@@ -113,14 +107,12 @@ dev 环境需要配 `WEBPHONE_PROXY_TARGET`（Vite 的 `/webphone` 代理目标�
 
 `npm run build` 产物是纯静态 `dist\`，但同源请求必须反代：
 
-| 路径 | 转发到 | 什么时候用 |
-|---|---|---|
-| `/get-session` | 你们的会话服务（本地开发是 `node server/token-server.js`） | 默认形态（旧平台） |
-| `/set-agent-status` | 同上（空闲 / 置忙 / 休息 / 退签） | 默认形态（旧平台） |
-| `/get-token` | 你们的签发服务（同上） | 只有切到新平台形态时 |
-| `/webphone/v1/*` | 平台的 WebPhone API | 只有切到新平台形态时 |
+| 路径 | 转发到 |
+|---|---|
+| `/get-session` | 你们的会话服务（本地开发是 `node server/token-server.js`） |
+| `/set-agent-status` | 同上（空闲 / 置忙 / 休息 / 退签） |
 
-dev 环境里 `/get-session`、`/set-agent-status`、`/get-token` 由 Vite 转给本地代理；线上用 nginx 做同样的反代。
+dev 环境里 `/get-session`、`/set-agent-status` 由 Vite 转给本地代理；线上用 nginx 做同样的反代。
 没有反代时签入会卡在「获取坐席账号失败」。
 
 ## 已知环境行为

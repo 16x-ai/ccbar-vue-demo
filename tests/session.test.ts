@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   SEAT_STATUS_TEXT,
-  createLegacySessionProvider,
-  isLegacyPlatform,
+  createSessionProvider,
   setSeatStatus,
 } from "../src/lib/session.ts";
 
@@ -31,10 +30,6 @@ test("坐席状态映射：忙碌与休息都是 On Break，用 reason 区分", 
   assert.deepEqual(SEAT_STATUS_TEXT.busy, ["On Break", "忙碌"]);
   assert.deepEqual(SEAT_STATUS_TEXT.break, ["On Break", "休息"]);
   assert.deepEqual(SEAT_STATUS_TEXT.offline, ["Logged Out", ""]);
-});
-
-test("默认走旧平台形态（网关没有 /webphone/v1/*）", () => {
-  assert.equal(isLegacyPlatform(), true);
 });
 
 test("置忙：页面打 /set-agent-status，把平台状态与原因带上", async () => {
@@ -97,7 +92,7 @@ test("SDK 的 setAgentStatus 落到平台接口，且用坐席账号而不是用
     return jsonResponse({ code: 0 });
   }) as typeof fetch;
   try {
-    const provider = createLegacySessionProvider(config, () => undefined);
+    const provider = createSessionProvider(config, () => undefined);
     // 先取会话：平台给的账号是 p8001（带企业前缀），后续状态调用要用它
     const session = (await provider.createSession({ sdkVersion: "3.1.0", platform: "web" })) as {
       agent?: { extension?: string };

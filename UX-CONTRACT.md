@@ -4,7 +4,7 @@
 
 | 操作 | 行为 |
 |---|---|
-| 签入 | `client.connect({ extension })`：内部 `initialize()` → 会话来源（默认 `sessionProvider` → 本地 `/get-session`；新平台形态才是 `tokenProvider`）→ REGISTER |
+| 签入 | `client.connect({ extension })`：内部 `initialize()` → 会话来源（`sessionProvider` → 本地 `/get-session`）→ REGISTER |
 | 退签 | `client.disconnect()`（挂断所有通话、删会话） |
 | 外呼 / 内呼 | `client.dial({ destination })`；内呼时号码先拼企业前缀（`prefixExtension`，与参考实现 `insideCall` 一致） |
 | 外呼 / 内呼（带参数） | 代码里的 `USERDATA` 常量非空时随 INVITE 带上 `X-User-Data` 头：`client.dial({ destination, userdata })`（需 SDK ≥ 3.1.5）。页面上没有输入框；只放行可见 ASCII，非法值由 `normalizeUserdata` 拦下并在红字行给中文提示；平台/服务端读这个头，页面侧读不到 |
@@ -38,8 +38,8 @@
 - 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。**没有「接通中」**：老 ccbar 的 serv 词表里就没有这一档，`_refreshServiceStatus` 是「`isEstablished()` 成立即 talking」，200 OK 一到就成立，所以 SDK 的 `connecting`（已应答、媒体还没连上）也显示「通话中」（绿色 `talking`），与 `active` 同文案 —— 两个状态在 SDK 里仍然分着。
 - SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 注册失败；收到 `connection.registered` 后显示「已注册」。文案与配色对齐老 ccbar（`getStatusText` + `updateUIStatus`）：**只有「已注册」是绿的**（`ccbar_sip_status_reg`），连上了但还没注册成功（已连接）仍是灰的；SDK 的 `reconnecting`（老 ccbar 没有这个概念）显示「未注册」，重连次数只写日志（`重连中（第 N 次）`）。
 - 通话标签取「当前活动通话」，来电在接通前退回到第一路未结束的通话，所以振铃中也能正确显示。
-- 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号，旧平台才有；分机号是去掉前缀后的部分），退签后隐藏。
+- 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号；分机号是去掉前缀后的部分），退签后隐藏。
 
 ## 设置
 
-API 主机、API KEY、API SECRET、内部分机、软电话 WSS（都必填；WSS 需 `wss://` 开头）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和会话请求体里，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。会话形态（默认旧平台 `token/fs` + `seat/account/get`，见 README）由构建变量 `VITE_LEGACY_PLATFORM` 决定，页面里不切换。无 alert/confirm。
+API 主机、API KEY、API SECRET、内部分机、软电话 WSS（都必填；WSS 需 `wss://` 开头）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和会话请求体里，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。会话由服务端拼好（`token/fs` + `seat/account/get`，见 README），页面里不切换。无 alert/confirm。

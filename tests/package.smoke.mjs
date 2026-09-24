@@ -14,8 +14,10 @@ test("Legacy setBu 明确抛出弃用错误；signOut 可清理未连接实例",
     await import("@16x/webphone-sdk/legacy");
   const legacy = new CCBarSDK({
     platform: "web",
-    tokenProvider: async () => {
-      throw new Error("本测试不得获取 Token");
+    sessionProvider: {
+      createSession: async () => {
+        throw new Error("本测试不得获取会话");
+      },
     },
   });
   assert.throws(() => legacy.setBu(), DeprecatedError);

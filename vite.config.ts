@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vue from "@vitejs/plugin-vue";
-import { defineConfig, loadEnv, searchForWorkspaceRoot, type Plugin } from "vite";
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from "vite";
 
 // 逐跳（hop-by-hop）头：h1 里可以转发，h2 里是禁止的
 const DROP_HEADERS = new Set([
@@ -38,12 +38,9 @@ function forwardHeaders(source: Record<string, string | string[] | undefined>) {
 }
 
 function tokenProxyPlugin(tokenOrigin: string): Plugin {
-  // /get-session：会话（坐席账号 + SIP 密码）；/set-agent-status：坐席状态；
-  // /get-token：新平台会话 token（只有切到新平台形态时用得到）
+  // /get-session：会话（坐席账号 + SIP 密码）；/set-agent-status：坐席状态
   const prefixes = [
-    "/api/xcall/webphone-token",
     "/ccbar/",
-    "/get-token",
     "/get-session",
     "/set-agent-status",
   ];
@@ -93,15 +90,6 @@ const useLocalSdk = process.env.CCBAR_LOCAL_SDK !== "0" && fs.existsSync(sdkSrc)
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
-  // 两种来源都读：.env（Vite 载入）与 shell 环境变量（便于临时验证）
-  const target = process.env.WEBPHONE_PROXY_TARGET || env.WEBPHONE_PROXY_TARGET;
-  // 平台实际的 /webphone/v1/* 前缀，默认就是 /webphone（等价于不改写）
-  const apiPrefix = (
-    process.env.WEBPHONE_API_PREFIX ||
-    env.WEBPHONE_API_PREFIX ||
-    "/webphone"
-  ).replace(/\/+$/, "");
   const tokenOrigin =
     process.env.TOKEN_PROXY_ORIGIN || "http://127.0.0.1:3000";
   return {
@@ -159,21 +147,6 @@ export default defineConfig(({ mode }) => {
       fs: {
         allow: [searchForWorkspaceRoot(process.cwd()), sdkRoot],
       },
-      ...(target
-        ? {
-            proxy: {
-              // 新 SDK 里写死请求 /webphone/v1/*；平台若挂在别的前缀，用 WEBPHONE_API_PREFIX 改写
-              "/webphone": {
-                target,
-                changeOrigin: true,
-                ws: true,
-                rewrite: (requestPath: string) =>
-                  requestPath.replace(/^\/webphone/, apiPrefix),
-              },
-              "/openapi": { target, changeOrigin: true, ws: true },
-            },
-          }
-        : {}),
     },
   };
 });

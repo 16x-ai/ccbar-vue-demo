@@ -102,7 +102,7 @@ test("签入：页面只打一次 /ref/get-token，取账号与解密都由 SDK 
     ]);
     // 直连 server2 时也要能用：取票不带 cookie（它只回显 Origin，不发 Allow-Credentials）
     assert.equal(calls[0]?.credentials, "omit");
-    // 旧平台约定：Authorization 是 token 原样（不带 Bearer），body 必须是 {}
+    // 平台约定：Authorization 是 token 原样（不带 Bearer），body 必须是 {}
     assert.equal(calls[1]?.authorization, "ref-token");
     assert.deepEqual(calls[1]?.body, {});
     // 会话是 SDK 拼的：密码已解密、软电话地址上挂着同一张票

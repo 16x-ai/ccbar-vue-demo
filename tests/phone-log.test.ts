@@ -29,7 +29,7 @@ test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页�
   assert.equal(callStatus.idle.text, "空闲");
   assert.equal(callStatus.dialing.text, "呼出中");
   assert.equal(callStatus.ringing.text, "振铃中");
-  // 老 ccbar 没有「接通中」：200 OK 一到（isEstablished() 成立）就是 talking
+  // 参考页没有「接通中」：200 OK 一到（isEstablished() 成立）就是 talking
   assert.equal(callStatus.connecting.text, "通话中");
   assert.equal(callStatus.connecting.tone, "talking");
   assert.equal(callStatus.active.text, "通话中");
@@ -42,18 +42,18 @@ test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页�
   }
 });
 
-test("SIP 标签对齐老 ccbar：只有「已注册」是绿的，断链显示「未注册」", () => {
+test("SIP 标签对齐参考页：只有「已注册」是绿的，断链显示「未注册」", () => {
   // ccbar.js updateUIStatus：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}`
   for (const [state, { tone }] of Object.entries(connectionStatus)) {
     assert.equal(tone === "reg", state === "registered", `${state} 的配色与 ccbar 不一致`);
   }
   // 连上了但还没注册成功（connected）仍然按灰的展示
   assert.equal(connectionStatus.connected.tone, "unreg");
-  // SDK 的「重连中」在老 ccbar 里没有这个概念：断链统一显示「未注册」，细节只在日志里
+  // SDK 的「重连中」在参考页里没有这个概念：断链统一显示「未注册」，细节只在日志里
   assert.deepEqual(connectionStatus.reconnecting, { text: "未注册", tone: "unreg" });
 });
 
-test("失败提示：错误码换成中文，其它文案原样（老 ccbar 的提示都是中文）", () => {
+test("失败提示：错误码换成中文，其它文案原样（参考页的提示都是中文）", () => {
   assert.equal(messageText("CALL_OPERATION_NOT_ALLOWED"), "呼叫失败");
   assert.equal(messageText("CALL_BUSY"), "对方忙");
   assert.equal(messageText("MEDIA_PERMISSION_DENIED"), "麦克风权限被拒绝");

@@ -3,8 +3,8 @@
  *
  * 会话：SDK 要的「会话」= 坐席账号 + SIP 密码 + 软电话 WSS 地址 + 一堆策略。
  * 页面只提供一个「换票口」（`/ref/get-token` → server2，加签用的 SECRET 留在服务端），
- * 剩下的「取坐席账号（seat/account/get）→ 解 SIP 密码 → 拼软电话地址」全部由 SDK 的
- * legacy 实现自己完成（createSdkSessionProvider）。
+ * 剩下的「取坐席账号（seat/account/get）→ 解 SIP 密码 → 拼软电话地址」全部由 SDK 自己完成
+ * （createSdkSessionProvider）。
  *
  * 坐席状态：走 **npm 包里的实现**（`@16x/webphone-sdk/legacy` 的 createLegacySessionProvider）——
  * 由它从**浏览器**直接请求平台的 `seats/set-status`；它优先用会话软电话地址里拼着的那张 fs token，
@@ -90,7 +90,7 @@ export const SEAT_STATUS: Record<
   offline: { request: { status: "offline", reason: "" }, platform: "Logged Out" },
 };
 
-/** SDK 带下来的会话线索：软电话地址里本来就拼着 fs token（老平台同一张票两用） */
+/** SDK 带下来的会话线索：软电话地址里就拼着 fs token（同一张票两用） */
 export type AgentStatusContext = { wssUrl?: string };
 
 /** 能切坐席状态的东西：SDK 的 sessionProvider（就是 npm 包里那个实现） */
@@ -137,7 +137,7 @@ export type SeatAccount = { username?: string; customerPrefix?: string };
 /**
  * 会话来源：页面只提供换票口（`/ref/get-token` → server2），
  * 后面「取坐席账号（`POST {API主机}/openapi/token/v1/seat/account/get`）→ 解 SIP 密码 → 拼软电话地址」
- * 全部由 SDK 的 legacy 实现自己完成。
+ * 全部由 SDK 自己完成。
  */
 export type DemoSessionProvider = SessionProvider & SeatStatusTarget;
 
@@ -152,14 +152,14 @@ export function createSdkSessionProvider(
     // 设置里的软电话地址直接交给 SDK：它按账号 domain 自己拼时，没有服务端那层「内网域名换成 WSS 主机名」的兜底
     ...(config.sipWs ? { sipWsUrl: config.sipWs } : {}),
     ...(Number(config.registerExpires) > 0 ? { registerExpires: Number(config.registerExpires) } : {}),
-    mobileIncomingEnabled: false, // 老平台会话策略：移动端形态不接来电
+    mobileIncomingEnabled: false, // 会话策略：移动端形态不接来电
   });
   const { setAgentStatus, invalidateToken } = provider;
   if (!setAgentStatus) {
     throw new Error("当前 SDK 版本没有 setAgentStatus：请升级 @16x/webphone-sdk");
   }
 
-  /** 上一次 createSession 收到的请求：刷新时复用它（legacy 实现不读这个参数，只是类型上需要一个） */
+  /** 上一次 createSession 收到的请求：刷新时复用它（provider 不读这个参数，只是类型上需要一个） */
   let lastRequest: CreateSessionRequest | undefined;
 
   async function buildSession(request: CreateSessionRequest): Promise<WebPhoneSession> {
@@ -178,8 +178,8 @@ export function createSdkSessionProvider(
 
   return {
     createSession: buildSession,
-    // 与旧流程一致：刷新 = 整条链重跑一遍（等于换一次 SIP 密码）。
-    // SDK 传进来的是 sessionId，legacy 实现不看它；没请求过时补一个占位对象，provider 不会读里面的字段。
+    // 刷新 = 整条链重跑一遍（等于换一次 SIP 密码）。
+    // SDK 传进来的是 sessionId，provider 不看它；没请求过时补一个占位对象，provider 不会读里面的字段。
     refreshSession: async (): Promise<WebPhoneSession> =>
       buildSession(lastRequest ?? { sdkVersion: "", platform: "web" }),
     setAgentStatus,

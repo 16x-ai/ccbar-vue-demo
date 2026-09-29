@@ -225,7 +225,7 @@ export function usePhone() {
 
   async function signOut() {
     await client.value?.disconnect();
-    // 与旧版一致：退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
+    // 退签时把坐席置为「退出登录」，否则平台上还挂着这个坐席。
     // 只是告知平台，失败不阻塞退签（页面状态照旧清空）
     if (sessionProvider) {
       void setSeatStatus(sessionProvider, "offline", appendFlowLog).catch((error: unknown) => {
@@ -235,7 +235,7 @@ export function usePhone() {
     resetLocalState();
   }
 
-  /** 退签时把页面状态清干净（内容与原来 signOut 尾部逐字一致） */
+  /** 退签时把页面状态清干净 */
   function resetLocalState() {
     connection.value = "offline";
     agent.value = "offline";
@@ -247,7 +247,7 @@ export function usePhone() {
 
   /**
    * 真正拨出去：外呼与内呼都走这里。
-   * 内呼在旧平台上的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
+   * 内呼的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
    * 不能只靠 SDK 的 type=extension —— 那只是在 INVITE 上加一个平台不认的头。
    */
   async function startCall(destination: string, extensionCall = false) {
@@ -334,7 +334,7 @@ export function usePhone() {
       }),
       instance.on("connection.registered", () => {
         connection.value = "registered";
-        // 与旧版一致：注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
+        // 注册成功即视为坐席「在线」（平台侧状态由服务端维护，这里只是本地标记）。
         // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
         if (agent.value === "offline") agent.value = "available";
         const account = instance.getAgent()?.extension || config.extension;
@@ -388,7 +388,7 @@ export function usePhone() {
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
-        // 本机自己结束的（挂断 / 拒接 / 振铃中取消）不算失败：老 ccbar 就是这个规则
+        // 本机自己结束的（挂断 / 拒接 / 振铃中取消）不算失败：参考页就是这个规则
         //（`if (data.originator !== 'local') setError('呼叫失败')`）——点了挂断却弹一句
         // 「呼叫失败 / CALL_OPERATION_NOT_ALLOWED」就是这么来的。
         const local = isLocalFailure(event.error);

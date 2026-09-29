@@ -1,8 +1,8 @@
 # CC Bar Vue 嵌入示例
 
-给客户看的最小接入页：**Vue 3 + 坐席条 + 日志**。界面、日志与状态语义对齐 `D:\code\ccbar\index.html`（参考页），软电话用 **npm 上的 `@16x/webphone-sdk`**（`import { CCBarClient }`），不再用 `<script>` 加载全局对象。
+给客户看的最小接入页：**Vue 3 + 坐席条 + 日志**。界面、日志与状态语义对齐 `D:\code\ccbar\index.html`（参考页），软电话用 **npm 上的 `@16x/webphone-sdk`**（`import { CCBarClient }`）。
 
-> 交付给客户的完整文档在 **[docs/前端接入文档.md](docs/前端接入文档.md)**：目录、接口契约、部署反代、排障表、与旧版脚本 SDK 的 API 对照。README 只留最短的上手与维护说明。
+> 交付给客户的完整文档在 **[docs/前端接入文档.md](docs/前端接入文档.md)**：目录、接口契约、部署反代、排障表。README 只留最短的上手与维护说明。
 
 ## 5 分钟上手
 
@@ -41,12 +41,11 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；取票服务 http:/
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `Set Agent Status`（Available / On Break+休息） |
 | 置忙 | 页面自己的 `setBusy()` → SDK 的会话来源从浏览器直接打平台的 `seats/set-status`（On Break + reason=忙碌；忙碌与休息平台用同一个状态、靠 reason 区分） |
 
-按钮都带 busy / 连接 / 号码条件禁用（旧脚本版没有，这次补上了）。`dial` / `answer` 在未连接时是**同步抛错**，页面用 `try/catch` 包住。
+按钮都带 busy / 连接 / 号码条件禁用。`dial` / `answer` 在未连接时是**同步抛错**，页面用 `try/catch` 包住。
 
 ### 自定义参数（`X-User-Data`）
 
-外呼 / 内呼时可以带一段自定义参数出去，平台/服务端从 SIP 报文的 **`X-User-Data`** 头里读
-（旧版脚本 SDK 的 `userdata`，3.1.5 起重新支持；头名与含义没变，平台侧不用改）。
+外呼 / 内呼时可以带一段自定义参数出去，平台/服务端从 SIP 报文的 **`X-User-Data`** 头里读。
 **页面上没有入口** —— 每个接入方要传的内容不一样，直接在代码里改一行：
 
 ```ts
@@ -59,7 +58,7 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 - 只能**可见 ASCII**：换行能伪造出新的 SIP 头（头注入），中文等非 ASCII 不合规。中文/JSON 请先
   `encodeURIComponent` / base64，平台侧解回来。写错了会在红字行给中文提示
   （`helpers.ts` 的 `normalizeUserdata` 先拦一道）；SDK 那边只回错误码 `CALL_INVALID_USERDATA`。
-- 留空（或纯空白）＝**不带这个头**，与旧版一致。
+- 留空（或纯空白）＝**不带这个头**。
 - 页面侧读不到这个值（SDK 不暴露 SIP 头）：要核对只能看 `SIP` 页的 `INVITE` 原文，或平台侧收到的报文。
 - 依赖 `@16x/webphone-sdk` ≥ 3.1.5（版本以 `package.json` 为准）。
 
@@ -95,7 +94,7 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 
 ### 换成你们自己的取票口
 
-取票地址有两种改法（都不需要动 SDK 代码，和旧 ccbar.js 页面的 `TOKEN_API` 一个套路）：
+取票地址有两种改法（都不需要动 SDK 代码）：
 
 - **代码里改**：`src/lib/session.ts` 的 `refTokenUrl()` —— 留空按约定拼同源路径，填了就原样使用。
 - **部署时改**：环境变量 `VITE_REF_TOKEN_API=/your/token/path`（优先级高于常量，构建时注入）。
@@ -136,7 +135,7 @@ dev 环境里 `/ref/get-token` 由 Vite 转给取票服务；线上用 nginx 做
 
 ## SIP 原文
 
-页面**固定**打开 JsSIP 的调试命名空间（`localStorage.debug = 'JsSIP:*'`），日志面板的 **SIP 页**因此能看到 REGISTER / INVITE 原文。这是 SDK **未公开**的调试能力（SDK 没暴露 SIP 报文接口，官方途径是 `client.getDiagnostics()`，只有生命周期日志），演示页面不再提供开关：要在页面里排障就一定要有原文。
+页面**固定**打开 JsSIP 的调试命名空间（`localStorage.debug = 'JsSIP:*'`），日志面板的 **SIP 页**因此能看到 REGISTER / INVITE 原文。这是 SDK **未公开**的调试能力（SDK 没暴露 SIP 报文接口，官方途径是 `client.getDiagnostics()`，只有生命周期日志），演示页面不给开关：要在页面里排障就一定要有原文。
 
 `enableJsSipDebug()` 在 `onMounted` 里第一时间执行 —— JsSIP 是首次 `connect()` 时懒加载的，debug 包在模块初始化时读一次 `localStorage.debug`，**晚于那一刻设置就不生效**（这也是为什么它不能做成「保存后再生效」的设置项）。
 
@@ -144,7 +143,7 @@ dev 环境里 `/ref/get-token` 由 Vite 转给取票服务；线上用 nginx 做
 
 - 页面 `import { CCBarClient } from "@16x/webphone-sdk"`。
 - 本地若存在 `D:\code\ccbar-web-sdk\src`，Vite 会 alias 到**源码**（方便边改 SDK 边调）；客户机器上没有该目录时自动用 **npm 包**。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
-- 仓库里**不再有**旧版脚本式 SDK（`public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 已删）：页面只走 npm 包，交付包里也就不会混进另一套 1.1MB 的旧 SDK。需要对照旧实现时看 `D:\code\xcall\ccbar`（带 token 的 fork）和 `D:\code\ccbar`（能打通外呼的参考页）。
+- 仓库里只有 npm 包这一条链，没有 `<script>` 加载的脚本版 SDK：`public\` 下不放 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js`，交付包里不会混进另外一套 1.1MB 的文件。参考实现看 `D:\code\xcall\ccbar`（带 token 的 fork）和 `D:\code\ccbar`（能打通外呼的参考页）。
 
 ## 脚本
 

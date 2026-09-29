@@ -42,10 +42,10 @@ export const agentStatus: Record<AgentState, { text: string; tone: string }> = {
 
 // 服务（通话）标签：把 SDK 的 8 个 CallState 归到参考页的 class 词汇上。
 //
-// 老 ccbar 没有「接通中」这一档（serv 只有 空闲/振铃中/呼出中/通话中/保持中/转接中）：
+// 参考页没有「接通中」这一档（serv 只有 空闲/振铃中/呼出中/通话中/保持中/转接中）：
 // `_refreshServiceStatus` 里 isEstablished() 一成立就是 talking，而 200 OK 一到
 // isEstablished() 就为真 —— 所以「已应答但媒体还没连上」这段（SDK 的 connecting）
-// 在 ccbar 那边显示的就是「通话中」，这里照做，别自作主张加一档。
+// 在坐席条上显示的就是「通话中」，这里照做，别自作主张加一档。
 export const callStatus: Record<CallState | "idle", { text: string; tone: string }> = {
   idle: { text: "空闲", tone: "idle" },
   new: { text: "新建", tone: "idle" },
@@ -58,13 +58,13 @@ export const callStatus: Record<CallState | "idle", { text: string; tone: string
   failed: { text: "失败", tone: "busy" },
 };
 
-// SIP / 连接标签：文案与配色对齐老 ccbar 的 getStatusText + updateUIStatus：
+// SIP / 连接标签：文案与配色对齐参考页的 getStatusText + updateUIStatus：
 //   文案：unreg/unregistered=未注册、connecting=连接中、connected=已连接、registered=已注册、
 //         failed=注册失败、error=错误
 //   配色：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}` —— **只有「已注册」是绿的**，
 //         连上了但还没注册成功（connected）仍然是灰的。
-// 两点与 SDK 状态的对应：SDK 的 offline 对应老 ccbar 的 unreg/unregistered；
-// 「重连中」（SDK 的 reconnecting）在老 ccbar 里没有这个概念 —— 断链时它显示「未注册」，
+// 两点与 SDK 状态的对应：SDK 的 offline 对应参考页的 unreg/unregistered；
+// 「重连中」（SDK 的 reconnecting）参考页没有这个概念 —— 断链时它显示「未注册」，
 // 重连过程只写进日志（见 usePhone 的「重连中（第 N 次）」）。所以这里也按「未注册」展示。
 export const connectionStatus: Record<ConnectionState | "registered", { text: string; tone: string }> =
   {
@@ -76,7 +76,7 @@ export const connectionStatus: Record<ConnectionState | "registered", { text: st
     failed: { text: "注册失败", tone: "unreg" },
   };
 
-// 失败提示：老 ccbar 的提示都是中文（`if (data.originator !== 'local') setError('呼叫失败')`），
+// 失败提示：参考页的提示都是中文（`if (data.originator !== 'local') setError('呼叫失败')`），
 // 不把 SDK 的错误码丢给用户 —— CCBarError 的 message 就是错误码，直接显示在红字行没人看得懂。
 // 错误码本身仍然留在日志里（showError 双写：红字行给中文、日志给原文）。
 export const errorText: Record<string, string> = {
@@ -101,7 +101,7 @@ export const errorText: Record<string, string> = {
   AUTH_TOKEN_UNAVAILABLE: "取不到会话，请重新签入",
   AUTH_PERMISSION_DENIED: "没有操作权限",
   CONFIG_INVALID: "配置不完整，请检查设置",
-  // 老平台那条链（@16x/webphone-sdk/legacy，本页面的会话链走的就是它）：具体原因在 error.cause 上，
+  // 平台接口那条链（@16x/webphone-sdk/legacy，本页面的会话链走的就是它）：具体原因在 error.cause 上，
   // 页面用 session.ts 的 causeText() 把平台/服务端的原话写到红字行，这里只是兜底
   LEGACY_PLATFORM_REJECTED: "平台拒绝了请求，请检查账号 / 密钥 / 环境",
   LEGACY_PLATFORM_UNREACHABLE: "连不上平台接口，请检查 API 主机与网络",
@@ -118,7 +118,7 @@ export function messageText(message: string): string {
 /**
  * 这通呼叫是不是「本机自己结束的」（挂断 / 拒接 / 振铃中取消）。
  * JsSIP 把本机取消也归到 failed 事件上（cause.originator === 'local'），
- * 老 ccbar 就是靠它区分「自己挂的」和「真失败」：只有后者才提示「呼叫失败」。
+ * 参考页就是靠它区分「自己挂的」和「真失败」：只有后者才提示「呼叫失败」。
  */
 export function isLocalFailure(value: unknown, depth = 0): boolean {
   if (value == null || depth > 3 || typeof value !== "object") return false;

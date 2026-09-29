@@ -37,6 +37,6 @@ test("签入按钮接上了（App.vue）", () => {
   const source = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
   assert.match(source, /id="____ccbar_signin____"/);
   assert.match(source, /phone\.run\('签入', phone\.signIn\)/);
-  // 页面上只有一条会话来源：不再有「签入2」按钮
+  // 页面上只有一条会话来源：没有「签入2」按钮
   assert.doesNotMatch(source, /signin2|signIn2|signInServer/);
 });

@@ -28,15 +28,15 @@
 - SDK 事件（`connection.*` / `call.*` / `agent.*` / `error`）经 `sipEventDetail` 只留排障字段后入日志；`call.failed`、`connection.failed`、`error` 记 error 级。
 - 拦截 console（`log/info/warn/error/debug`），命中 `JsSIP|WebSocket|Registration|registrar|sip:|UA[|transport|WebPhone` 的输出写进 `SIP` 面板（来源 `jssip`）。SIP 原文靠 `localStorage.debug='JsSIP:*'`（见 README「SIP 原文开关」）。
 - 写日志前对 `token=`、`"password"` 打码；`Error` 取 message，对象转 JSON。
-- **提示分两层**（对齐老 ccbar）：红字行给人看 —— 错误码换成中文（`logs.ts` 的 `errorText`：`CALL_OPERATION_NOT_ALLOWED` → 「呼叫失败」，`CALL_BUSY` → 「对方忙」…），日志里保留原文（错误码 / SIP 原因）给排障。
-- **本机自己结束的呼叫不算失败**：`call.failed` 的 `error.cause.originator === 'local'`（挂断、拒接、振铃中取消）时只写一行 `本机结束呼叫`，不弹红字 —— 老 ccbar 的规则是 `if (data.originator !== 'local') setError('呼叫失败')`。只有对端导致的失败（480 / 拒接 / 忙 …）才提示「呼叫失败」。
-- **失败不自动重拨**：`call.failed` 只写日志、弹红字，页面不做任何重试（老 ccbar 有一层「首通 480 后 0.8s 重拨一次」，本示例不要）。
+- **提示分两层**（对齐参考页）：红字行给人看 —— 错误码换成中文（`logs.ts` 的 `errorText`：`CALL_OPERATION_NOT_ALLOWED` → 「呼叫失败」，`CALL_BUSY` → 「对方忙」…），日志里保留原文（错误码 / SIP 原因）给排障。
+- **本机自己结束的呼叫不算失败**：`call.failed` 的 `error.cause.originator === 'local'`（挂断、拒接、振铃中取消）时只写一行 `本机结束呼叫`，不弹红字 —— 参考页的规则是 `if (data.originator !== 'local') setError('呼叫失败')`。只有对端导致的失败（480 / 拒接 / 忙 …）才提示「呼叫失败」。
+- **失败不自动重拨**：`call.failed` 只写日志、弹红字，页面不做任何重试（参考页有一层「首通 480 后 0.8s 重拨一次」，本示例不要）。
 
 ## 状态标签
 
 - 工作（坐席）：`agent.statusChanged` → 在线 / 休息 / 离线（class `ccbar_work_status_online|reset|offline`）。
-- 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。**没有「接通中」**：老 ccbar 的 serv 词表里就没有这一档，`_refreshServiceStatus` 是「`isEstablished()` 成立即 talking」，200 OK 一到就成立，所以 SDK 的 `connecting`（已应答、媒体还没连上）也显示「通话中」（绿色 `talking`），与 `active` 同文案 —— 两个状态在 SDK 里仍然分着。
-- SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 注册失败；收到 `connection.registered` 后显示「已注册」。文案与配色对齐老 ccbar（`getStatusText` + `updateUIStatus`）：**只有「已注册」是绿的**（`ccbar_sip_status_reg`），连上了但还没注册成功（已连接）仍是灰的；SDK 的 `reconnecting`（老 ccbar 没有这个概念）显示「未注册」，重连次数只写日志（`重连中（第 N 次）`）。
+- 服务（通话）：`call.stateChanged` 等事件 → 空闲 / 新建 / 呼出中 / 振铃中 / 通话中 / 保持中 / 已结束 / 失败，映射到参考页的 class `ccbar_serv_status_idle|busy|calling|talking|hold`。**没有「接通中」**：参考页的 serv 词表里没有这一档，`_refreshServiceStatus` 是「`isEstablished()` 成立即 talking」，200 OK 一到就成立，所以 SDK 的 `connecting`（已应答、媒体还没连上）也显示「通话中」（绿色 `talking`），与 `active` 同文案 —— 两个状态在 SDK 里仍然分着。
+- SIP（连接）：`connection.*` → 未注册 / 连接中 / 已连接 / 注册失败；收到 `connection.registered` 后显示「已注册」。文案与配色对齐参考页（`getStatusText` + `updateUIStatus`）：**只有「已注册」是绿的**（`ccbar_sip_status_reg`），连上了但还没注册成功（已连接）仍是灰的；SDK 的 `reconnecting`（参考页没有这个概念）显示「未注册」，重连次数只写日志（`重连中（第 N 次）`）。
 - 通话标签取「当前活动通话」，来电在接通前退回到第一路未结束的通话，所以振铃中也能正确显示。
 - 标题栏的分机 chip：签入后显示 `前缀 <customerPrefix> · 分机 <分机号>`（前缀取自坐席账号；分机号是去掉前缀后的部分），退签后隐藏。
 

@@ -99,6 +99,12 @@ export const errorText: Record<string, string> = {
   H5_BACKGROUND_NOT_SUPPORTED: "后台不支持外呼",
   AUTH_TOKEN_EXPIRED: "会话已过期，请重新签入",
   AUTH_TOKEN_UNAVAILABLE: "取不到会话，请重新签入",
+  AUTH_PERMISSION_DENIED: "没有操作权限",
+  CONFIG_INVALID: "配置不完整，请检查设置",
+  // 老平台那条链（@16x/webphone-sdk/legacy，本页面的会话链走的就是它）：具体原因在 error.cause 上，
+  // 页面用 session.ts 的 causeText() 把平台/服务端的原话写到红字行，这里只是兜底
+  LEGACY_PLATFORM_REJECTED: "平台拒绝了请求，请检查账号 / 密钥 / 环境",
+  LEGACY_PLATFORM_UNREACHABLE: "连不上平台接口，请检查 API 主机与网络",
   SDK_INTERNAL_ERROR: "SDK 内部错误",
   SDK_ALREADY_DISPOSED: "SDK 已销毁，请刷新页面",
 };

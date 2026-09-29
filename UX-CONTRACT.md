@@ -4,14 +4,14 @@
 
 | 操作 | 行为 |
 |---|---|
-| 签入 | `client.connect({ extension })`：内部 `initialize()` → 会话来源（`sessionProvider` → 本地 `/get-session`）→ REGISTER |
+| 签入 | `client.connect()`：内部 `initialize()` → 会话来源（`sessionProvider`：页面只换票 `/ref/get-token`，取坐席账号 / 解密 / 拼会话由 SDK 做）→ REGISTER |
 | 退签 | `client.disconnect()`（挂断所有通话、删会话） |
 | 外呼 / 内呼 | `client.dial({ destination })`；内呼时号码先拼企业前缀（`prefixExtension`，与参考实现 `insideCall` 一致） |
 | 外呼 / 内呼（带参数） | 代码里的 `USERDATA` 常量非空时随 INVITE 带上 `X-User-Data` 头：`client.dial({ destination, userdata })`（需 SDK ≥ 3.1.5）。页面上没有输入框；只放行可见 ASCII，非法值由 `normalizeUserdata` 拦下并在红字行给中文提示；平台/服务端读这个头，页面侧读不到 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })`（来电在接通前不是 active call，靠 `call.incoming` 的 callId 定位） |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `seats/set-status`（`Available` / `On Break`+reason=休息） |
-| 置忙 | 页面直接调 `setSeatStatus(config, 'On Break', '忙碌')`（SDK 的 `setAgentStatus` 没有 busy 取值），用 reason 与「休息」区分 |
+| 置忙 | 页面直接调 `setSeatStatus(sessionProvider, 'busy', log)`（SDK 的 `setAgentStatus` 没有 busy 取值），走同一个平台接口，用 reason 与「休息」区分 |
 
 `dial` / `answer` / `setActiveCall` 在未连接时**同步抛错**，调用点必须 `try/catch`。按钮统一带 busy / 连接 / 号码条件禁用。
 
@@ -42,4 +42,4 @@
 
 ## 设置
 
-API 主机、API KEY、API SECRET、内部分机、软电话 WSS（都必填；WSS 需 `wss://` 开头）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和会话请求体里，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。会话由服务端拼好（`token/fs` + `seat/account/get`，见 README），页面里不切换。无 alert/confirm。
+API 主机、API KEY、API SECRET、内部分机、软电话 WSS（都必填；WSS 需 `wss://` 开头）与 SIP 注册有效期（默认 600 秒，交给服务端写进会话的 `sip.registerExpires`）。SIP 原文固定记录，不做成设置项（见 README「SIP 原文」）。KEY / SECRET 只出现在设置框和会话请求体里，不进日志；设置写入 `localStorage` 的 `ccbar.vueDemo.settings`。会话由 SDK 自己拼（页面只换票 `/ref/get-token`，见 README），页面里不切换。无 alert/confirm。

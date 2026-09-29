@@ -6,7 +6,7 @@
  *   模板里绑 phone.xxx.value           // 状态是 ref，动作是函数
  *
  * 它做三件事：
- *   1. 建一个 CCBarClient（会话来源见 session.ts）并把 SDK 事件翻译成页面状态与日志；
+ *   1. 建一个 CCBarClient（会话来源见 session.ts：页面只换票，会话由 SDK 自己拼）并把 SDK 事件翻译成页面状态与日志；
  *   2. 把「按钮点击」变成 SDK 调用（签入、外呼、保持、转接……）；
  *   3. 维护两个日志面板的数据。
  */
@@ -26,7 +26,7 @@ import {
   timeStamp,
 } from "./logs";
 import type { AgentState, CallState, ConnectionState, LogLevel, LogLine, LogPanel } from "./logs";
-import { createSessionProvider, setSeatStatus } from "./session";
+import { causeText, createSdkSessionProvider, setSeatStatus } from "./session";
 import type { DemoSessionProvider, SeatAccount } from "./session";
 import { createConfig, normalizeConfig, persistConfig } from "./settings";
 import type { PhoneConfig } from "./settings";
@@ -97,7 +97,7 @@ export function usePhone() {
   const subscriptions: Array<() => void> = [];
   /** 坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
   const customerPrefix = ref("");
-  /** 会话来源：会话由服务端拼（/get-session），坐席状态由 npm 包的实现从浏览器直接打平台接口 */
+  /** 会话来源：页面只换票（/ref/get-token），取坐席账号、解密、拼会话都由 SDK 自己来 */
   let sessionProvider: DemoSessionProvider | undefined;
   let activeCallId = "";
   /** 上一次记过的通话快照：只在变化时写日志（见 refreshCallState） */
@@ -200,18 +200,24 @@ export function usePhone() {
     }
   }
 
+  /**
+   * 签入：页面只换一张票（`/ref/get-token` → server2），取坐席账号、解 SIP 密码、
+   * 拼软电话地址都由 SDK 自己来（session.ts 的 createSdkSessionProvider）。
+   */
   async function signIn() {
-    // 先保存：设置里换过平台形态的话会重建客户端，所以实例要在保存之后再取
+    // 先保存：换票要用设置里的主机与凭据，所以实例取用之前先把设置落盘
     saveSettings();
     const instance = client.value;
     if (!instance) throw new Error("SDK 未就绪，请刷新页面");
     extension.value = config.extension;
-    appendFlowLog("info", "sip", `开始签入 extension=${config.extension} host=${config.host}`);
-    // 取会话 → 连 WSS → REGISTER 要几秒，期间盖全屏遮罩，别让人以为卡住了
+    appendFlowLog("info", "seat", `开始签入（页面只换票，会话由 SDK 自己拼）host=${config.host}`);
+    // 换票 → 连 WSS → REGISTER 要几秒，期间盖全屏遮罩，别让人以为卡住了
     loading.value = "正在签入…";
     try {
-      // SDK 会走 sessionProvider 拿会话，再发 REGISTER；坐席身份由服务端按登录态决定
       await instance.connect();
+    } catch (error) {
+      // SDK 的错误码在 message 上、可读原因在 cause 上：红字行要给平台/服务端的原话
+      throw new Error(causeText(error));
     } finally {
       loading.value = "";
     }
@@ -226,6 +232,11 @@ export function usePhone() {
         appendFlowLog("warn", "seat", `置离线失败：${error instanceof Error ? error.message : error}`);
       });
     }
+    resetLocalState();
+  }
+
+  /** 退签时把页面状态清干净（内容与原来 signOut 尾部逐字一致） */
+  function resetLocalState() {
     connection.value = "offline";
     agent.value = "offline";
     callState.value = "idle";
@@ -407,6 +418,16 @@ export function usePhone() {
   }
 
   // ---------- 客户端生命周期 ----------
+  /** 坐席账号就绪：两条路共用（分机前缀给页面显示，内呼时还要拼在号码前） */
+  function applySeatAccount(account: SeatAccount) {
+    customerPrefix.value = String(account.customerPrefix || "");
+    appendFlowLog(
+      "ok",
+      "seat",
+      `坐席账号就绪 ${stringifyLog({ username: account.username, prefix: account.customerPrefix || "-" })}`,
+    );
+  }
+
   function createClient(): CCBarClient {
     const options: CCBarClientOptions = {
       locale: "zh-CN",
@@ -416,31 +437,28 @@ export function usePhone() {
       // 演示页单标签页，不启用 SharedWorker
       sharedWorker: { enabled: false, fallback: "single-tab" },
     };
-    // 会话由我们自己的服务端拼好（server/get-session.js）
-    sessionProvider = createSessionProvider(config, appendFlowLog, (account: SeatAccount) => {
-      customerPrefix.value = String(account.customerPrefix || "");
-      appendFlowLog(
-        "ok",
-        "seat",
-        `坐席账号就绪 ${stringifyLog({ username: account.username, prefix: account.customerPrefix || "-" })}`,
-      );
-    });
-    
+    // 页面只换票（/ref/get-token → server2），取坐席账号、解密、拼会话都由 SDK 自己做
+    sessionProvider = createSdkSessionProvider(config, appendFlowLog, applySeatAccount);
     return new CCBarClient({ ...options, sessionProvider });
+  }
+
+  /** 建客户端并订阅事件；失败（例如 SDK 版本太老）返回 false，原因写到红字行 */
+  function mountClient(): boolean {
+    try {
+      client.value = createClient();
+    } catch (error) {
+      client.value = undefined;
+      showError(error instanceof Error ? error.message : error);
+      return false;
+    }
+    subscribe(client.value);
+    return true;
   }
 
   function mount() {
     // 必须在 SDK 第一次 connect（懒加载 JsSIP）之前打开 SIP 原文
     unsubscribeSipDebug = enableJsSipDebug((level, text) => appendPanelLog("sip", level, "jssip", text));
-    try {
-      client.value = createClient();
-    } catch (error) {
-      // 例如 SDK 版本太老、没有旧平台需要的 sessionProvider：提示清楚，别白屏
-      client.value = undefined;
-      showError(error instanceof Error ? error.message : error);
-      return;
-    }
-    subscribe(client.value);
+    if (!mountClient()) return;
     appendFlowLog(
       "info",
       "app",

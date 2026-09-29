@@ -10,12 +10,13 @@
 cd D:\code\ccbar-vue-demo
 copy .env.example .env     # 可选；默认配置就能跑通本地代理
 npm install
-npm run dev                # 页面 http://127.0.0.1:5173 ；本地代理 http://127.0.0.1:3000
+npm run dev                # 页面 http://127.0.0.1:5173 ；取票服务 http://127.0.0.1:3100
 ```
 
 打开页面 →「设置」填 **API 主机 / API KEY / API SECRET / 内部分机** →「保存」→「签入」。
 
-> 页面要能访问到同源的 `/get-session`（dev 由 Vite 转给本地代理），否则签入会卡在「获取坐席账号失败」。
+> 页面只向同源的 `/ref/get-token` 换一张票（dev 由 Vite 转给取票服务），取坐席账号、解 SIP 密码、
+> 拼会话都由 SDK 自己来；取票口不通时会在红字行给出服务端/平台的原话。
 
 预期现象：
 
@@ -30,7 +31,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；本地代理 http:/
 
 | 操作 | 调用 |
 |---|---|
-| 签入 | `client.connect({ extension })`（内部先 `initialize()`，再取会话、REGISTER） |
+| 签入 | `client.connect()`（内部先 `initialize()`，再换票 → 取坐席账号 / 解密码 / 拼会话 → REGISTER） |
 | 退签 | `client.disconnect()` |
 | 外呼 | `client.dial({ destination })` |
 | 外呼 / 内呼带自定义参数 | `client.dial({ destination, userdata })`：代码里的 `USERDATA` 常量非空时原样写进 INVITE 的 `X-User-Data` 头，由平台/服务端读。只能可见 ASCII，留空＝不带头（见下） |
@@ -38,7 +39,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；本地代理 http:/
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上的 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })` |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `Set Agent Status`（Available / On Break+休息） |
-| 置忙 | 页面自己的 `setBusy()` → `POST /set-agent-status`（平台侧是 On Break + reason=忙碌；忙碌与休息平台用同一个状态、靠 reason 区分） |
+| 置忙 | 页面自己的 `setBusy()` → SDK 的会话来源从浏览器直接打平台的 `seats/set-status`（On Break + reason=忙碌；忙碌与休息平台用同一个状态、靠 reason 区分） |
 
 按钮都带 busy / 连接 / 号码条件禁用（旧脚本版没有，这次补上了）。`dial` / `answer` 在未连接时是**同步抛错**，页面用 `try/catch` 包住。
 
@@ -62,46 +63,49 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 - 页面侧读不到这个值（SDK 不暴露 SIP 头）：要核对只能看 `SIP` 页的 `INVITE` 原文，或平台侧收到的报文。
 - 依赖 `@16x/webphone-sdk` ≥ 3.1.5（版本以 `package.json` 为准）。
 
-## 接口链路（会话由服务端拼好）
+## 接口链路（页面只换票，会话由 SDK 拼）
 
-页面只打两个同源接口（`server/token-server.js` 是本地示例）。服务端按参考页
-D:\code\xcall\ccbar\index.html 的顺序把会话拼好：
+页面只打**一个**同源接口：`POST /ref/get-token`（本地示例是 `server2/`，即 xcall 参考实现那套取票服务）。
 
-1. `POST {API主机}/openapi/v1/token/fs`（X-Ca + HMAC-SHA256 签名）→ `{ token, expires }`
-2. `POST {API主机}/openapi/token/v1/seat/account/get`，`Authorization: <上面那个 token>` → 坐席账号
-3. AES-128-CBC/Pkcs7 解出 SIP 密码（调 SDK 的 `decryptSipPassword`，密钥只在服务端）→ 拼 `wss://…/api/fs/sip-ws?token=…`
-4. 返回 SDK 的 `WebPhoneSession`，页面用 SDK 的 `sessionProvider` 交给 SDK（SDK 3.1.0 起支持）
+1. 页面 → 取票服务：`POST /ref/get-token`，body `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
+2. 取票服务按平台契约加签（`X-Ca-Key` / `X-Ca-Timestamp` / `X-Ca-Nonce` / `X-Ca-Signature`，HMAC-SHA256）
+   打 `POST {API主机}/openapi/v1/token/fs` → `{ token, expires }`，原样回给页面（加签用的 SECRET 只在服务端）
+3. 这条票之后交给 **SDK 的 legacy 实现**（`@16x/webphone-sdk/legacy` 的 `createLegacySessionProvider`）：
+   它打 `POST {API主机}/openapi/token/v1/seat/account/get`（`Authorization: <票>`）取坐席账号
+4. SDK 解出 SIP 密码（AES-128-CBC/Pkcs7，或直接用平台回的密文——SDK ≥3.1.10 在会话入口自动解），
+   拼出 `wss://…/api/fs/sip-ws?token=<票>`，然后 REGISTER
 
-坐席状态走 `POST /set-agent-status` → `POST {API主机}/openapi/token/v1/seats/set-status`，
-body `{ extension, status, reason }`，其中 **extension 传坐席账号**（会取回会话里的 `username`，可能带企业前缀，不是用户填的分机号）；
-status 只有三个值：`Available`(空闲) / `On Break`(置忙 reason=忙碌、休息 reason=休息) / `Logged Out`(退签)。
+坐席状态（空闲 / 置忙 / 休息 / 退签）同样由 SDK 从**浏览器直接**请求平台的
+`POST {API主机}/openapi/token/v1/seats/set-status`，body `{ extension, status, reason }`，
+其中 **extension 传坐席账号**（`username`，可能带企业前缀，不是用户填的分机号）；status 只有三个值：
+`Available`(空闲) / `On Break`(置忙 reason=忙碌、休息 reason=休息) / `Logged Out`(退签)。
+它优先用会话软电话地址里挂着的那张票（就是上面换来的那张），不会再多换一次。
 
 这样页面不碰 AES 密钥、不依赖网关的跨域配置，平台侧也不用改造。相关环境变量：
 
 | 变量 | 作用 |
 |---|---|
-| `VITE_SESSION_API` | 会话接口地址，默认同源 `/get-session` |
-| `VITE_AGENT_STATUS_API` | 坐席状态接口地址，默认同源 `/set-agent-status` |
-| `CC_SEAT_ACCOUNT_PATH` | 坐席账号路径，默认 `/openapi/token/v1/seat/account/get` |
-| `CC_SEAT_STATUS_PATH` | 坐席状态路径，默认 `/openapi/token/v1/seats/set-status` |
-| `CC_SIP_WS_PATH` | 软电话路径，默认 `/api/fs/sip-ws` |
+| `VITE_REF_TOKEN_API` | 取票口地址，默认同源 `/ref/get-token` |
+| `REF_TOKEN_PORT` | 本地取票服务端口，默认 3100（占用时自动往后找） |
+| `CC_API_HOST` / `CC_API_APP_KEY` / `CC_API_APP_SECRET` | 取票服务打平台接口的兜底配置（页面设置里的值优先） |
 
-**软电话 WSS 是必填项**（设置里填 `wss://…/api/fs/sip-ws`），服务端会带上它去拼会话里的 WSS 地址；`SIP 注册有效期`会随请求交给服务端，由服务端写进会话的 `sip.registerExpires`（留空默认 600 秒；SDK 拿不到有效值时才回退 300 秒）。
+**软电话 WSS 是必填项**（设置里填 `wss://…/api/fs/sip-ws`）：SDK 按坐席账号的域名拼地址时，这个值直接盖在会话的 `transport.wssUrl` 上；`SIP 注册有效期`由 SDK 写进会话的 `sip.registerExpires`（留空默认 600 秒；SDK 拿不到有效值时才回退 300 秒）。
 
 SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、只由 JsSIP 每 10 分钟续一次注册；链路上有 nginx/NAT 空闲超时（nginx 默认 60 秒）时会被静默掐断长连接，把 `VITE_SIP_KEEPALIVE=25` 打开心跳即可。
 
-### 换成你们自己的会话接口
+### 换成你们自己的取票口
 
-会话地址有两种改法（都不需要动 SDK 代码，和旧 ccbar.js 页面的 `TOKEN_API` 一个套路）：
+取票地址有两种改法（都不需要动 SDK 代码，和旧 ccbar.js 页面的 `TOKEN_API` 一个套路）：
 
-- **代码里改**：`src/lib/session.ts` 的 `sessionUrl()` —— 留空按约定拼同源路径，填了就原样使用。
-- **部署时改**：环境变量 `VITE_SESSION_API=/your/session/path`（优先级高于常量，构建时注入）。
+- **代码里改**：`src/lib/session.ts` 的 `refTokenUrl()` —— 留空按约定拼同源路径，填了就原样使用。
+- **部署时改**：环境变量 `VITE_REF_TOKEN_API=/your/token/path`（优先级高于常量，构建时注入）。
 
-最省事的做法：把 `/get-session` 反代到你们自己的服务，按同一契约返回会话即可 —— 请求体
-`{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`（换成你们后端后，后四项可以都不要，
-分机与凭据由服务端登录态决定），响应是一份 `WebPhoneSession`（字段见 `server/get-session.js` 末尾）。
-页面里的 KEY / SECRET 那时也可以留空（就不会再随请求发出去）。本仓库 `server/get-token.js` 的签名、
-`server/get-session.js` 的拼装可以直接抄；解密那一步调的是 SDK 的 `decryptSipPassword`（`@16x/webphone-sdk/legacy`）。
+对端只要按同一契约实现：请求体 `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
+（换成你们自己的后端后，后四项可以都不要，分机与凭据由服务端登录态决定），成功回平台那层信封
+`{ code: 0, data: { token, expires } }`，失败回 `{ code: -1, message: "原因" }`（页面把 `message` 原样写到红字行）。
+本仓库 `server2/get-token.js` 的加签可以直接抄。取票用 `credentials: "omit"`，所以直连别的地址也能用
+（只要对方回 CORS 头、不发 `Access-Control-Allow-Credentials`）。页面里的 KEY / SECRET 那时也可以留空
+（就不会再随请求发出去）。
 
 ## 部署注意（重要）
 
@@ -109,11 +113,10 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 
 | 路径 | 转发到 |
 |---|---|
-| `/get-session` | 你们的会话服务（本地开发是 `node server/token-server.js`） |
-| `/set-agent-status` | 同上（空闲 / 置忙 / 休息 / 退签） |
+| `/ref/get-token` | 你们的取票服务（本地开发是 `npm run dev` 起的 server2，端口 3100） |
 
-dev 环境里 `/get-session`、`/set-agent-status` 由 Vite 转给本地代理；线上用 nginx 做同样的反代。
-没有反代时签入会卡在「获取坐席账号失败」。
+dev 环境里 `/ref/get-token` 由 Vite 转给取票服务；线上用 nginx 做同样的反代 —— 或者构建时直接把
+`VITE_REF_TOKEN_API` 指到你们的地址，省掉反代。没有反代时签入会卡在「取票」那一步，红字行给出原话。
 
 ## 已知环境行为
 
@@ -147,9 +150,9 @@ dev 环境里 `/get-session`、`/set-agent-status` 由 Vite 转给本地代理�
 
 | 命令 | 作用 |
 |---|---|
-| `npm run dev` | 页面 + Token 代理一起起 |
-| `npm run dev:vite` / `npm run token-server` | 只跑其中一个 |
-| `npm test` | `node --test`，覆盖日志与状态文案、校验函数、Token 代理与会话接口、Vue 组件编译 |
+| `npm run dev` | 页面 + 取票服务一起起 |
+| `npm run dev:vite` | 只跑页面（取票服务要自己起：`CCBAR_DEMO=1 node server2/server.js`） |
+| `npm test` | `node --test`，覆盖日志与状态文案、校验函数、会话链（换票 → 取账号 → 改状态）、Vue 组件编译 |
 | `npm run typecheck` / `npm run build` | `vue-tsc` / 生产构建（Node ≥ 22.18） |
 | `npm run preview` | 预览构建产物（注意上面的反代问题） |
 
@@ -159,10 +162,11 @@ dev 环境里 `/get-session`、`/set-agent-status` 由 Vite 转给本地代理�
 src/App.vue                     页面骨架：状态标签 + 按钮 + 日志卡片（薄，只做绑定）
 src/components/                 设置弹窗、日志卡片、来电浮层
 src/lib/usePhone.ts             页面逻辑：状态、按钮动作、SDK 事件 → 页面状态与日志
-src/lib/session.ts              会话来源（默认 sessionProvider）+ 坐席状态
+src/lib/session.ts              会话来源（页面只换票，会话由 SDK 自己拼）+ 坐席状态
 src/lib/settings.ts             设置读、校验、写 localStorage
 src/lib/sipDebug.ts             SIP 原文：打开 JsSIP debug 并接住 console
 src/lib/logs.ts                 日志格式化与状态文案（纯函数，有单测）
 src/lib/helpers.ts              地址校验、分机前缀处理
-server/                         本地演示代理（生产换成你们自己的后端）
+server/dev.mjs                  一条命令同时起取票服务与 Vite
+server2/                        本地取票服务（xcall 参考实现那套；生产换成你们自己的）
 ```

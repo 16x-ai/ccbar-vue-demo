@@ -37,24 +37,25 @@ function forwardHeaders(source: Record<string, string | string[] | undefined>) {
   return headers;
 }
 
-function tokenProxyPlugin(tokenOrigin: string): Plugin {
-  // /get-session：会话（坐席账号 + SIP 密码）；/get-token：SDK 从浏览器打平台接口前换的 fs token
-  const prefixes = [
-    "/ccbar/",
-    "/get-session",
-    "/get-token",
-    "/set-agent-status",
-  ];
+/** 一条代理规则：`prefix` 命中后转发到 `target`；`stripPrefix` 用于去掉前缀（server2 的路由不带前缀） */
+type ProxyRoute = { prefix: string; target: string; stripPrefix?: string };
+
+function refTokenProxyPlugin(refOrigin: string): Plugin {
+  // /ref/：取票口 —— 转发到 server2（xcall 参考实现那套服务）并把 /ref 去掉，server2 自己认 /get-token
+  const routes: ProxyRoute[] = [{ prefix: "/ref/", target: refOrigin, stripPrefix: "/ref" }];
+
   return {
-    name: "ccbar-token-proxy",
+    name: "ccbar-ref-token-proxy",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url || "";
-        if (!prefixes.some((prefix) => url === prefix || url.startsWith(prefix))) {
+        const route = routes.find((item) => url === item.prefix || url.startsWith(item.prefix));
+        if (route === undefined) {
           next();
           return;
         }
-        const target = new URL(url, tokenOrigin);
+        const forwardedUrl = route.stripPrefix ? url.replace(route.stripPrefix, "") : url;
+        const target = new URL(forwardedUrl, route.target);
         const headers = forwardHeaders(req.headers);
         headers.host = target.host;
         const proxyReq = http.request(
@@ -67,13 +68,13 @@ function tokenProxyPlugin(tokenOrigin: string): Plugin {
           },
         );
         proxyReq.on("error", (error) => {
-          console.error(`[token-proxy] ${tokenOrigin} ${error.message}`);
+          console.error(`[ref-token-proxy] ${refOrigin} ${error.message}`);
           res.statusCode = 502;
           res.setHeader("Content-Type", "application/json; charset=utf-8");
           res.end(
             JSON.stringify({
               code: -1,
-              message: `页面 5173 连不上 Token 代理 ${tokenOrigin}：${error.message}`,
+              message: `页面 5173 连不上取票服务 ${refOrigin}：${error.message}`,
             }),
           );
         });
@@ -91,8 +92,10 @@ const useLocalSdk = process.env.CCBAR_LOCAL_SDK !== "0" && fs.existsSync(sdkSrc)
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const tokenOrigin =
-    process.env.TOKEN_PROXY_ORIGIN || "http://127.0.0.1:3000";
+  // 取票口（server2）：npm run dev 时由 dev.mjs 注入实际地址（端口冲突会自动 +1）；
+  // 单独跑 `npm run dev:vite` 时按默认端口找它
+  const refOrigin =
+    process.env.REF_TOKEN_PROXY_ORIGIN || "http://127.0.0.1:3100";
   return {
     define: {
       __CCBAR_DEV__: mode !== "production",
@@ -134,7 +137,7 @@ export default defineConfig(({ mode }) => {
       ...(useLocalSdk ? { exclude: ["@16x/webphone-sdk"] } : {}),
     },
     plugins: [
-      tokenProxyPlugin(tokenOrigin),
+      refTokenProxyPlugin(refOrigin),
       vue({
         template: {
           compilerOptions: { isCustomElement: (tag) => tag === "xcall-ccbar" },

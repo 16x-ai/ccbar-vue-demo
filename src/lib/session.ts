@@ -1,19 +1,20 @@
 /**
  * 会话从哪来、坐席状态从哪走。
  *
- * 会话：SDK 要的「会话」= 坐席账号 + SIP 密码 + 软电话 WSS 地址 + 一堆策略，
- * 由我们自己的服务端拼好后交给 SDK（sessionProvider）。
- * 见 server/get-session.js：token/fs → seat/account/get → 解出 SIP 密码（用 npm 包的 decryptSipPassword）→ 拼 WSS。
+ * 会话：SDK 要的「会话」= 坐席账号 + SIP 密码 + 软电话 WSS 地址 + 一堆策略。
+ * 页面只提供一个「换票口」（`/ref/get-token` → server2，加签用的 SECRET 留在服务端），
+ * 剩下的「取坐席账号（seat/account/get）→ 解 SIP 密码 → 拼软电话地址」全部由 SDK 的
+ * legacy 实现自己完成（createSdkSessionProvider）。
  *
  * 坐席状态：走 **npm 包里的实现**（`@16x/webphone-sdk/legacy` 的 createLegacySessionProvider）——
- * 由它从**浏览器**直接请求平台的 `seats/set-status`，不再经过本仓库的服务端路由；
- * 它优先用会话软电话地址里拼着的那张 fs token，拿不到时才回落到取票口子（同源 /get-token）。
+ * 由它从**浏览器**直接请求平台的 `seats/set-status`；它优先用会话软电话地址里拼着的那张 fs token，
+ * 也就是换票口发出去的那一张，不再多换一次票。
  *
- * 中间经过同源代理接口，所以 API KEY / API SECRET 这类凭据不会下发到浏览器。
- * 换成你们自己的后端时，只要按同样的请求/返回契约实现，这个文件就只改地址。
+ * 加签只在服务端做：换成你们自己的后端后，KEY / SECRET 可以完全不进浏览器（页面设置里留空即可）；
+ * 只要按同样的请求/返回契约实现，这个文件就只改地址。
  */
 
-import type { SessionProvider, WebPhoneSession } from "@16x/webphone-sdk";
+import type { CreateSessionRequest, SessionProvider, WebPhoneSession } from "@16x/webphone-sdk";
 import { createLegacySessionProvider } from "@16x/webphone-sdk/legacy";
 import type { AgentState, LogLevel } from "./logs";
 import type { PhoneConfig } from "./settings";
@@ -21,14 +22,12 @@ import type { PhoneConfig } from "./settings";
 /** 写一行流程日志（由 usePhone 注入） */
 export type LogFn = (level: LogLevel, source: string, message: unknown) => void;
 
-/** 取会话的地址：VITE_SESSION_API > 同源 /get-session */
-export function sessionUrl(config: PhoneConfig): string {
-  return endpoint(String(import.meta.env?.VITE_SESSION_API || "").trim(), config, "/get-session");
-}
-
-/** 取 fs token 的地址：VITE_TOKEN_API > 同源 /get-token（坐席状态拿不到会话里那张票时的兜底） */
-export function tokenUrl(config: PhoneConfig): string {
-  return endpoint(String(import.meta.env?.VITE_TOKEN_API || "").trim(), config, "/get-token");
+/**
+ * 取票口：VITE_REF_TOKEN_API > 同源 /ref/get-token。
+ * `/ref/` 由 Vite 代理转发到 server2（xcall 参考实现那套服务，另一个端口），页面只出这一张票。
+ */
+export function refTokenUrl(config: PhoneConfig): string {
+  return endpoint(String(import.meta.env?.VITE_REF_TOKEN_API || "").trim(), config, "/ref/get-token");
 }
 
 function endpoint(configured: string, config: PhoneConfig, path: string): string {
@@ -38,7 +37,7 @@ function endpoint(configured: string, config: PhoneConfig, path: string): string
   return `${base}${path}`;
 }
 
-// 本地代理模式需要的字段（host / KEY / SECRET / WSS / 注册有效期）。
+// 本地取票服务需要的字段（host / KEY / SECRET / WSS / 注册有效期）。
 // 换成你们自己的后端后，这些都可以不发——分机与凭据应该由服务端登录态决定。
 function gatewayFields(config: PhoneConfig): Record<string, unknown> {
   return {
@@ -51,10 +50,14 @@ function gatewayFields(config: PhoneConfig): Record<string, unknown> {
 }
 
 /** 发一个 JSON POST，把响应解析成对象；响应不是 JSON（例如打到了文档站）时给出可读的报错 */
-async function postJson(url: string, body: unknown): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
+async function postJson(
+  url: string,
+  body: unknown,
+  credentials: RequestCredentials = "include",
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
   const response = await fetch(url, {
     method: "POST",
-    credentials: "include",
+    credentials,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -96,12 +99,22 @@ export type SeatStatusTarget = {
 };
 
 /**
+ * SDK 的错误码在 `message` 上、可读原因在 `cause` 上（平台回的话、换票失败的原因都在那儿），
+ * 这里取可读的那句 —— 页面上才不会只显示 `LEGACY_PLATFORM_REJECTED`。
+ */
+export function causeText(error: unknown): string {
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  const reason = cause instanceof Error ? cause.message : cause;
+  return String(reason ?? (error instanceof Error ? error.message : error));
+}
+
+/**
  * 切坐席状态（空闲 / 置忙 / 休息 / 退签）：由 npm 包的实现去请求平台
  * `POST {API主机}/openapi/token/v1/seats/set-status`（Authorization 带 fs token）。
  *
  * 注意 extension 用的是平台给的「坐席账号」而不是用户填的分机号：账号可能带企业前缀
  * （例如账号 p8001、用户填 8001），平台按账号查坐席，传错会回「Data not found」——
- * 这一步现在由 SDK 自己取坐席账号完成。
+ * 这一步由 SDK 自己取坐席账号完成。
  */
 export async function setSeatStatus(
   target: SeatStatusTarget,
@@ -113,10 +126,7 @@ export async function setSeatStatus(
   try {
     await target.setAgentStatus(request);
   } catch (error) {
-    // SDK 的 message 是错误码，可读原因放在 cause 上（平台回的话、换票失败的原因都在那儿）
-    const cause = (error as { cause?: unknown } | null)?.cause;
-    const reason = cause instanceof Error ? cause.message : cause;
-    throw new Error(String(reason ?? (error instanceof Error ? error.message : error)));
+    throw new Error(causeText(error));
   }
   log("ok", "seat", `坐席状态已更新：${request.reason || platform}`);
 }
@@ -125,85 +135,97 @@ export async function setSeatStatus(
 export type SeatAccount = { username?: string; customerPrefix?: string };
 
 /**
- * 会话由我们自己的服务端拼好，页面只负责交给 SDK。
- * SDK 在注册有效期将到时调 refreshSession，这里顺带重新取一次账号（等价于换一次 SIP 密码）。
+ * 会话来源：页面只提供换票口（`/ref/get-token` → server2），
+ * 后面「取坐席账号（`POST {API主机}/openapi/token/v1/seat/account/get`）→ 解 SIP 密码 → 拼软电话地址」
+ * 全部由 SDK 的 legacy 实现自己完成。
  */
 export type DemoSessionProvider = SessionProvider & SeatStatusTarget;
 
-export function createSessionProvider(
+export function createSdkSessionProvider(
   config: PhoneConfig,
   log: LogFn,
   onAccount?: (account: SeatAccount) => void,
 ): DemoSessionProvider {
-  // 坐席状态交给 npm 包：它优先用会话软电话地址里的 token 打平台接口（并自己取坐席账号）
-  let statusTarget: SeatStatusTarget | undefined;
-  let sessionWssUrl = "";
-  const seatStatus = (): SeatStatusTarget => (statusTarget ??= createSeatStatusTarget(config));
-
-  async function fetchSession(): Promise<WebPhoneSession> {
-    log("info", "seat", `开始获取坐席账号 ${sessionUrl(config)}`);
-    const url = sessionUrl(config);
-    const { ok, status, data } = await postJson(url, {
-      extension: config.extension,
-      ...gatewayFields(config),
-    });
-    const session = data as Partial<WebPhoneSession> & { message?: string } & SeatAccount;
-    // 最小校验：有 sip.uri 才算真的拿到了会话
-    if (!ok || !session.sip?.uri) {
-      throw new Error(String(session.message || `获取坐席账号失败（HTTP ${status}）`));
-    }
-    onAccount?.({ username: session.username, customerPrefix: session.customerPrefix });
-    // 会话里的软电话地址带着 fs token：留着给切坐席状态用（页面直接调时没有 context）
-    sessionWssUrl = String(session.transport?.wssUrl ?? "");
-    return session as WebPhoneSession;
+  const provider = createLegacySessionProvider({
+    host: config.host,
+    getToken: () => fetchRefFsToken(config, log),
+    // 设置里的软电话地址直接交给 SDK：它按账号 domain 自己拼时，没有服务端那层「内网域名换成 WSS 主机名」的兜底
+    ...(config.sipWs ? { sipWsUrl: config.sipWs } : {}),
+    ...(Number(config.registerExpires) > 0 ? { registerExpires: Number(config.registerExpires) } : {}),
+    mobileIncomingEnabled: false, // 老平台会话策略：移动端形态不接来电
+  });
+  const { setAgentStatus, invalidateToken } = provider;
+  if (!setAgentStatus) {
+    throw new Error("当前 SDK 版本没有 setAgentStatus：请升级 @16x/webphone-sdk");
   }
+
+  /** 上一次 createSession 收到的请求：刷新时复用它（legacy 实现不读这个参数，只是类型上需要一个） */
+  let lastRequest: CreateSessionRequest | undefined;
+
+  async function buildSession(request: CreateSessionRequest): Promise<WebPhoneSession> {
+    const session = await provider.createSession(request);
+    lastRequest = request;
+    // 会话里没有 customerPrefix（分机前缀只是页面显示用的）——账号原文就在 provider 缓存里，这一下不会多发请求
+    const account = await provider.getSeatAccount().catch(() => undefined);
+    if (account) {
+      onAccount?.({
+        username: String(account.username ?? account.account ?? "").trim() || session.agent.extension,
+        customerPrefix: String(account.customerPrefix ?? "").trim(),
+      });
+    }
+    return session;
+  }
+
   return {
-    createSession: fetchSession,
-    refreshSession: fetchSession,
-    setAgentStatus: (request: AgentStatusRequest, context?: AgentStatusContext) => {
-      // SDK 有会话时会带 context 上来；页面自己调的（置忙 / 退签）用取会话时记住的那个地址
-      const carried = context ?? (sessionWssUrl ? { wssUrl: sessionWssUrl } : undefined);
-      return seatStatus().setAgentStatus(request, carried);
-    },
+    createSession: buildSession,
+    // 与旧流程一致：刷新 = 整条链重跑一遍（等于换一次 SIP 密码）。
+    // SDK 传进来的是 sessionId，legacy 实现不看它；没请求过时补一个占位对象，provider 不会读里面的字段。
+    refreshSession: async (): Promise<WebPhoneSession> =>
+      buildSession(lastRequest ?? { sdkVersion: "", platform: "web" }),
+    setAgentStatus,
+    invalidateToken,
   };
 }
 
 /**
- * 坐席状态的目标：npm 包里的实现（`@16x/webphone-sdk/legacy` 的 createLegacySessionProvider）。
- * 它优先用会话软电话地址里拼着的那张 fs token（`?token=`）去打平台的 seat/account/get 与
- * seats/set-status —— 不用再多一个接口、也不用再换一次票；只有拿不到那张票时才会走
- * getToken 回调（同源 /get-token，服务端加签、SECRET 不下发）。
- */
-function createSeatStatusTarget(config: PhoneConfig): SeatStatusTarget {
-  const provider = createLegacySessionProvider({
-    host: config.host,
-    getToken: () => fetchFsToken(config),
-  });
-  const { setAgentStatus } = provider;
-  if (!setAgentStatus) {
-    throw new Error("当前 SDK 版本没有 setAgentStatus：请升级 @16x/webphone-sdk");
-  }
-  // 实现内部不依赖 this，这里直接当普通函数用
-  return { setAgentStatus };
-}
-
-/**
- * 换一张 fs token：POST 同源的 /get-token（服务端加签，API SECRET 不下发）。
+ * 换票的公共实现：POST 一个「换票口」，按平台那层信封 `{ code: 0, data: { token, expires } }` 解析。
  * 失败时把服务端/平台那句原因原样抛出去 —— SDK 会把它包进 CCBarError.cause。
  */
-async function fetchFsToken(config: PhoneConfig): Promise<{ token: string; expires?: number }> {
-  const { ok, status, data } = await postJson(tokenUrl(config), {
-    extension: config.extension,
-    ...gatewayFields(config),
-  });
+async function postFsToken(
+  url: string,
+  config: PhoneConfig,
+  credentials: RequestCredentials,
+  label: string,
+): Promise<{ token: string; expires?: number }> {
+  const { ok, status, data } = await postJson(
+    url,
+    { extension: config.extension, ...gatewayFields(config) },
+    credentials,
+  );
   const message = String(data.message ?? "").trim();
   if (!ok || Number(data.code) !== 0) {
-    throw new Error(message || `取 fs token 失败（HTTP ${status}）`);
+    throw new Error(message || `${label}失败（HTTP ${status}）`);
   }
   // 服务端回的是平台那层信封：{ code: 0, data: { token, expires } }
   const envelope = (data.data ?? {}) as { token?: unknown; expires?: unknown };
   const token = String(envelope.token ?? "").trim();
-  if (!token) throw new Error("取 fs token 失败：响应里没有 token");
+  if (!token) throw new Error(`${label}失败：响应里没有 token`);
   const expires = Number(envelope.expires);
   return { token, ...(Number.isFinite(expires) && expires > 0 ? { expires } : {}) };
+}
+
+/**
+ * 换一张 fs token：POST /ref/get-token，由 Vite 代理转到 server2（参考实现那套服务）。
+ * 用 `credentials: "omit"` —— server2 只回显 Origin、不发 Access-Control-Allow-Credentials，
+ * 这样以后把 VITE_REF_TOKEN_API 指到别的地址、让页面直连它也能用。
+ */
+async function fetchRefFsToken(
+  config: PhoneConfig,
+  log: LogFn,
+): Promise<{ token: string; expires?: number }> {
+  const url = refTokenUrl(config);
+  log("info", "seat", `请求取票口 ${url}`);
+  const result = await postFsToken(url, config, "omit", "取票");
+  log("ok", "seat", `取票成功 expires=${result.expires ?? "-"}`);
+  return result;
 }

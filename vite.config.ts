@@ -41,7 +41,7 @@ function forwardHeaders(source: Record<string, string | string[] | undefined>) {
 type ProxyRoute = { prefix: string; target: string };
 
 function refTokenProxyPlugin(refOrigin: string): Plugin {
-  // /get-token：取票口 —— 转发到 server2（示例取票服务），server2 认的就是这个路径
+  // /get-token：取票口 —— 转发到取票服务（server/index.js），它认的就是这个路径
   const routes: ProxyRoute[] = [{ prefix: "/get-token", target: refOrigin }];
 
   return {
@@ -94,7 +94,7 @@ const useLocalSdk = process.env.CCBAR_LOCAL_SDK !== "0" && fs.existsSync(sdkSrc)
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  // 取票口（server2）：npm run dev 时由 dev.mjs 注入实际地址（端口冲突会自动 +1）；
+  // 取票口（server/index.js）：npm run dev 时由 dev.mjs 注入实际地址（端口冲突会自动 +1）；
   // 单独跑 `npm run dev:vite` 时按默认端口找它
   const refOrigin =
     process.env.REF_TOKEN_PROXY_ORIGIN || "http://127.0.0.1:3100";

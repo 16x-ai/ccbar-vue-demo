@@ -209,7 +209,7 @@ export function usePhone() {
   }
 
   /**
-   * 签入：页面只换一张票（`/get-token` → server2），取坐席账号、解 SIP 密码、组装会话
+   * 签入：页面只换一张票（`/get-token` → 取票服务），取坐席账号、解 SIP 密码、组装会话
    * 都由 SDK 自己来（session.ts 的 createSdkSessionProvider）；软电话地址用设置里填的那条。
    */
   async function signIn() {
@@ -441,7 +441,7 @@ export function usePhone() {
       // 演示页单标签页，不启用 SharedWorker
       sharedWorker: { enabled: false, fallback: "single-tab" },
     };
-    // 页面只换票（/get-token → server2），取坐席账号、解密、组装会话都由 SDK 自己做
+    // 页面只换票（/get-token → 取票服务），取坐席账号、解密、组装会话都由 SDK 自己做
     sessionProvider = createSdkSessionProvider(config, appendFlowLog, applySeatAccount);
     // 记下这个客户端是按哪份设置建的：签入时用它判断要不要重建
     clientConfigKey = configKey(config);

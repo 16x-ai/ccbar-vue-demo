@@ -1,5 +1,0 @@
-{
-  "type": "commonjs",
-  "private": true,
-  "description": "示例取票服务（server.js / get-token.js）：把页面的分机号换成一张 fs token。本仓库是 \"type\": \"module\"，这里只声明本目录按 CommonJS 解析。"
-}

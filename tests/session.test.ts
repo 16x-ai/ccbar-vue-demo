@@ -40,7 +40,7 @@ function encryptSeatPassword(plain: string): string {
 }
 
 /**
- * 假环境：页面只打 /get-token（server2 那个口子），
+ * 假环境：页面只打 /get-token（本仓库的示例取票服务），
  * 之后的 seat/account/get、seats/set-status 都是 SDK 直接从浏览器打平台的。
  */
 function mockRefPlatform(onToken?: () => Response) {
@@ -100,7 +100,7 @@ test("签入：页面只打一次 /get-token，取账号与解密都由 SDK 自�
       "/get-token",
       "https://api.example.test/openapi/token/v1/seat/account/get",
     ]);
-    // 直连 server2 时也要能用：取票不带 cookie（它只回显 Origin，不发 Allow-Credentials）
+    // 直连取票服务时也要能用：取票不带 cookie（它只回显 Origin，不发 Allow-Credentials）
     assert.equal(calls[0]?.credentials, "omit");
     // 平台约定：Authorization 是 token 原样（不带 Bearer），body 必须是 {}
     assert.equal(calls[1]?.authorization, "ref-token");

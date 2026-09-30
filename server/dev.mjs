@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -23,13 +22,12 @@ for (const host of ["127.0.0.1", "localhost", "::1"]) noProxy.add(host);
 process.env.NO_PROXY = [...noProxy].join(",");
 process.env.no_proxy = process.env.NO_PROXY;
 
-// 取票服务：server2/ 是本仓库的示例实现（CommonJS、独立端口），页面只对它换一次票。
+// 取票服务：server/index.js 是本仓库的示例实现（独立端口），页面只对它换一次票。
 // 两处顺序有讲究：
-//   1) CCBAR_DEMO=1 必须在 require 之前设 —— server2 在模块加载时就读它，否则 /get-token 一律 403
-//   2) require 必须在 loadEnvFile 之后 —— server2/get-token.js 也从环境变量读兜底配置
+//   1) CCBAR_DEMO=1 必须在 import 之前设 —— 服务在模块加载时就读它，否则 /get-token 一律 403
+//   2) import 必须在 loadEnvFile 之后 —— 服务也从环境变量读兜底配置
 process.env.CCBAR_DEMO = "1";
-const refRequire = createRequire(import.meta.url);
-const ref = refRequire(path.join(root, "server2/server.js"));
+const ref = await import(pathToFileURL(path.join(root, "server/index.js")).href);
 const refTokenServer = await ref.startServer(
   ref.server,
   ref.BIND,

@@ -65,7 +65,7 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 
 ## 接口链路（页面只换票，会话由 SDK 拼）
 
-页面只打**一个**同源接口：`POST /get-token`（本仓库的示例实现是 `server2/`）。
+页面只打**一个**同源接口：`POST /get-token`（本仓库的示例实现是 `server/index.js`）。
 
 1. 页面 → 取票服务：`POST /get-token`，body `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
 2. 取票服务按平台契约加签（`X-Ca-Key` / `X-Ca-Timestamp` / `X-Ca-Nonce` / `X-Ca-Signature`，HMAC-SHA256）
@@ -73,7 +73,7 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 3. 这条票之后交给 **SDK 的 legacy 实现**（`@16x/webphone-sdk/legacy` 的 `createLegacySessionProvider`）：
    它打 `POST {API主机}/openapi/token/v1/seat/account/get`（`Authorization: <票>`）取坐席账号
 4. SDK 解出 SIP 密码（AES-128-CBC/Pkcs7，或直接用平台回的密文——SDK ≥3.1.10 在会话入口自动解），
-   拼出 `wss://…/api/fs/sip-ws?token=<票>`，然后 REGISTER
+   软电话地址用设置里填的那条（SDK 只往上挂 `?token=<票>`，见下），然后 REGISTER
 
 坐席状态（空闲 / 置忙 / 休息 / 退签）同样由 SDK 从**浏览器直接**请求平台的
 `POST {API主机}/openapi/token/v1/seats/set-status`，body `{ extension, status, reason }`，
@@ -103,7 +103,7 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 对端只要按同一契约实现：请求体 `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
 （换成你们自己的后端后，后四项可以都不要，分机与凭据由服务端登录态决定），成功回平台那层信封
 `{ code: 0, data: { token, expires } }`，失败回 `{ code: -1, message: "原因" }`（页面把 `message` 原样写到红字行）。
-本仓库 `server2/get-token.js` 的加签可以直接抄。取票用 `credentials: "omit"`，所以直连别的地址也能用
+本仓库 `server/index.js` 的加签可以直接抄。取票用 `credentials: "omit"`，所以直连别的地址也能用
 （只要对方回 CORS 头、不发 `Access-Control-Allow-Credentials`）。页面里的 KEY / SECRET 那时也可以留空
 （就不会再随请求发出去）。
 
@@ -113,7 +113,7 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 
 | 路径 | 转发到 |
 |---|---|
-| `/get-token` | 你们的取票服务（本地开发是 `npm run dev` 起的 server2，端口 3100） |
+| `/get-token` | 你们的取票服务（本地开发是 `npm run dev` 起的 `server/index.js`，端口 3100） |
 
 dev 环境里 `/get-token` 由 Vite 转给取票服务；线上用 nginx 做同样的反代 —— 或者构建时直接把
 `VITE_REF_TOKEN_API` 指到你们的地址，省掉反代。没有反代时签入会卡在「取票」那一步，红字行给出原话。
@@ -151,7 +151,7 @@ dev 环境里 `/get-token` 由 Vite 转给取票服务；线上用 nginx 做同�
 | 命令 | 作用 |
 |---|---|
 | `npm run dev` | 页面 + 取票服务一起起 |
-| `npm run dev:vite` | 只跑页面（取票服务要自己起：`CCBAR_DEMO=1 node server2/server.js`） |
+| `npm run dev:vite` | 只跑页面（取票服务要自己起：`CCBAR_DEMO=1 node server/index.js`） |
 | `npm test` | `node --test`，覆盖日志与状态文案、校验函数、会话链（换票 → 取账号 → 改状态）、Vue 组件编译 |
 | `npm run typecheck` / `npm run build` | `vue-tsc` / 生产构建（Node ≥ 22.18） |
 | `npm run preview` | 预览构建产物（注意上面的反代问题） |
@@ -167,6 +167,6 @@ src/lib/settings.ts             设置读、校验、写 localStorage
 src/lib/sipDebug.ts             SIP 原文：打开 JsSIP debug 并接住 console
 src/lib/logs.ts                 日志格式化与状态文案（纯函数，有单测）
 src/lib/helpers.ts              地址校验、分机前缀处理
+server/index.js                 本地取票服务（把分机号换成一张 fs token；生产换成你们自己的）
 server/dev.mjs                  一条命令同时起取票服务与 Vite
-server2/                        本地取票服务（把分机号换成一张 fs token；生产换成你们自己的）
 ```

@@ -14,7 +14,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
 import { CCBarClient } from "@16x/webphone-sdk";
 import type { CCBarCall, CCBarClientOptions } from "@16x/webphone-sdk";
-import { normalizeUserdata, prefixExtension, shortExtension } from "./helpers";
+import { configKey, normalizeUserdata, prefixExtension, shortExtension } from "./helpers";
 import {
   agentStatus,
   callStatus,
@@ -27,7 +27,7 @@ import {
 } from "./logs";
 import type { AgentState, CallState, ConnectionState, LogLevel, LogLine, LogPanel } from "./logs";
 import { causeText, createSdkSessionProvider, setSeatStatus } from "./session";
-import type { DemoSessionProvider, SeatAccount } from "./session";
+import type { SeatAccount, SessionSource } from "./session";
 import { createConfig, normalizeConfig, persistConfig } from "./settings";
 import type { PhoneConfig } from "./settings";
 import { enableJsSipDebug } from "./sipDebug";
@@ -35,7 +35,7 @@ import { enableJsSipDebug } from "./sipDebug";
 /** 来电浮层里的一路来电 */
 export type IncomingCall = { callid: string; callerName: string };
 
-// 日志最多留多少行：参考页的 DOM 不设上限，Vue 里给个上限避免长会话把内存撑大
+// 日志最多留多少行：给个上限，避免长会话把内存撑大
 const LOG_LIMIT = 500;
 
 // 已知平台行为：每次注册完成后的**第一次外呼**会被回 480（Q.850 cause=16），几秒内自愈。
@@ -63,6 +63,12 @@ function sipKeepaliveSeconds(): number {
   return Number.isFinite(value) && value >= 0 ? value : 600;
 }
 
+/** 空日志面板的占位文案（页面刚打开 / 清空之后各一句） */
+const PLACEHOLDER: Record<LogPanel, { initial: string; cleared: string }> = {
+  flow: { initial: "等待签入。签入、取 Token、坐席账号会写在这里。", cleared: "日志已清空。" },
+  sip: { initial: "等待话机登录。连接与通话事件会写在这里。", cleared: "SIP 日志已清空。" },
+};
+
 export function usePhone() {
   // ---------- 状态 ----------
   const config = reactive<PhoneConfig>(createConfig());
@@ -76,15 +82,15 @@ export function usePhone() {
   const number = ref("");
   /** 页面上那一行红色错误提示 */
   const feedback = ref("");
-  /** 正在执行的动作名，用来禁用按钮防重复点击 */
-  const busy = ref("");
+  /** 有动作在执行（按钮统一禁用，防重复点击） */
+  const busy = ref(false);
   /** 全屏加载提示文案（空＝不显示）：签入、设置坐席状态这类要等服务的操作会用它 */
   const loading = ref("");
   const logs = ref<LogLine[]>([]);
   const incoming = ref<IncomingCall[]>([]);
   const placeholder = reactive<Record<LogPanel, string>>({
-    flow: "等待签入。签入、取 Token、坐席账号会写在这里。",
-    sip: "等待话机登录。连接与通话事件会写在这里。",
+    flow: PLACEHOLDER.flow.initial,
+    sip: PLACEHOLDER.sip.initial,
   });
 
   const connected = computed(
@@ -97,8 +103,10 @@ export function usePhone() {
   const subscriptions: Array<() => void> = [];
   /** 坐席前缀（customerPrefix）：标题栏要和分机一起显示，内呼时也要拼在号码前 */
   const customerPrefix = ref("");
-  /** 会话来源：页面只换票（/ref/get-token），取坐席账号、解密、拼会话都由 SDK 自己来 */
-  let sessionProvider: DemoSessionProvider | undefined;
+  /** 会话来源：页面只换票（/get-token），取坐席账号、解密、拼会话都由 SDK 自己来 */
+  let sessionProvider: SessionSource | undefined;
+  /** 现有客户端是按哪份设置建的：签入前比一下，变了就重建（见 ensureClient） */
+  let clientConfigKey = "";
   let activeCallId = "";
   /** 上一次记过的通话快照：只在变化时写日志（见 refreshCallState） */
   let lastCallSnapshot = "";
@@ -117,13 +125,13 @@ export function usePhone() {
       },
     ].slice(-LOG_LIMIT);
   }
-  /** 写流程日志；来源是 sip/jssip 时自动落到 SIP 面板（与参考页一致） */
+  /** 写流程日志；来源是 sip/jssip 时自动落到 SIP 面板 */
   function appendFlowLog(level: LogLevel, source: string, message: unknown) {
     appendPanelLog(/^(sip|jssip)$/i.test(source) ? "sip" : "flow", level, source, message);
   }
   function clearLog(panel: LogPanel) {
     logs.value = logs.value.filter((line) => line.panel !== panel);
-    placeholder[panel] = panel === "sip" ? "SIP 日志已清空。" : "日志已清空。";
+    placeholder[panel] = PLACEHOLDER[panel].cleared;
   }
 
   // ---------- 错误行 ----------
@@ -184,10 +192,10 @@ export function usePhone() {
   }
 
   // ---------- 动作：给页面按钮调用 ----------
-  /** 统一包一层：防重复点击、清掉上一次的错误、结束刷新通话状态 */
-  async function run(name: string, action: () => unknown | Promise<unknown>) {
+  /** 按钮统一走这里：执行期间禁用按钮、清掉上一次的错误、失败时把原因写到红字行 */
+  async function run(action: () => unknown | Promise<unknown>) {
     if (busy.value) return;
-    busy.value = name;
+    busy.value = true;
     clearError();
     try {
       await action();
@@ -195,20 +203,20 @@ export function usePhone() {
       // dial / answer 在未连接时是同步抛错，所以 try 必须包住调用本身
       showError(error instanceof Error ? error.message : error);
     } finally {
-      busy.value = "";
+      busy.value = false;
       refreshCallState();
     }
   }
 
   /**
-   * 签入：页面只换一张票（`/ref/get-token` → server2），取坐席账号、解 SIP 密码、
-   * 拼软电话地址都由 SDK 自己来（session.ts 的 createSdkSessionProvider）。
+   * 签入：页面只换一张票（`/get-token` → server2），取坐席账号、解 SIP 密码、组装会话
+   * 都由 SDK 自己来（session.ts 的 createSdkSessionProvider）；软电话地址用设置里填的那条。
    */
   async function signIn() {
     // 先保存：换票要用设置里的主机与凭据，所以实例取用之前先把设置落盘
     saveSettings();
-    const instance = client.value;
-    if (!instance) throw new Error("SDK 未就绪，请刷新页面");
+    // 客户端只在建的时候读一次设置：刚改过就按新设置重建，不用刷新页面
+    const instance = ensureClient();
     extension.value = config.extension;
     appendFlowLog("info", "seat", `开始签入（页面只换票，会话由 SDK 自己拼）host=${config.host}`);
     // 换票 → 连 WSS → REGISTER 要几秒，期间盖全屏遮罩，别让人以为卡住了
@@ -246,11 +254,11 @@ export function usePhone() {
   }
 
   /**
-   * 真正拨出去：外呼与内呼都走这里。
-   * 内呼的含义就是「企业前缀 + 分机号」（参考实现 insideCall 的拼法），
+   * 外呼 / 内呼（页面上的两个按钮都走这里）。
+   * 内呼的含义就是「企业前缀 + 分机号」（平台靠它认内线），
    * 不能只靠 SDK 的 type=extension —— 那只是在 INVITE 上加一个平台不认的头。
    */
-  async function startCall(destination: string, extensionCall = false) {
+  async function dial(destination: string, extensionCall = false) {
     const instance = client.value;
     if (!instance) throw new Error("请先签入");
     // 常量先过一道校验：写错了（中文/换行）就在红字行给中文提示，别把 SDK 的错误码丢出来
@@ -264,11 +272,6 @@ export function usePhone() {
       `${extensionCall ? "内呼" : "外呼"} ${target}${note}${withData}（话机连接=${connection.value}）`,
     );
     await instance.dial({ destination: target, ...(data ? { userdata: data } : {}) });
-  }
-
-  /** 用户点「外呼 / 内呼」 */
-  async function dial(destination: string, extensionCall = false) {
-    await startCall(destination, extensionCall);
   }
 
   async function hangup() {
@@ -296,14 +299,19 @@ export function usePhone() {
     await call?.reject({ reason: "已拒接" });
     removeIncoming(callId);
   }
-  /** 空闲 / 休息：走 SDK 的 setAgentStatus（平台请求由 npm 包的实现发出） */
-  async function setAgent(status: "available" | "break") {
+  /** 切坐席状态要等平台的接口，期间盖全屏遮罩（两条路都走这里） */
+  async function withAgentLoading(action: () => unknown) {
     loading.value = "正在设置坐席状态…";
     try {
-      await client.value?.setAgentStatus(status);
+      await action();
     } finally {
       loading.value = "";
     }
+  }
+
+  /** 空闲 / 休息：走 SDK 的 setAgentStatus（平台请求由 npm 包的实现发出） */
+  async function setAgent(status: "available" | "break") {
+    await withAgentLoading(() => client.value?.setAgentStatus(status));
     agent.value = status;
   }
 
@@ -312,16 +320,12 @@ export function usePhone() {
    * SDK 的 client.setAgentStatus 固定不带 reason，所以这里直接调会话来源（npm 包里那套实现）。
    */
   async function setBusy() {
-    if (!sessionProvider) {
+    const provider = sessionProvider;
+    if (!provider) {
       showError("还没签入：先签入再置忙");
       return;
     }
-    loading.value = "正在设置坐席状态…";
-    try {
-      await setSeatStatus(sessionProvider, "busy", appendFlowLog);
-    } finally {
-      loading.value = "";
-    }
+    await withAgentLoading(() => setSeatStatus(provider, "busy", appendFlowLog));
     agent.value = "busy";
   }
 
@@ -338,7 +342,7 @@ export function usePhone() {
         // 重连后再次注册时不覆盖，免得把页面上的「忙碌 / 休息」冲掉
         if (agent.value === "offline") agent.value = "available";
         const account = instance.getAgent()?.extension || config.extension;
-        // 坐席账号可能带企业前缀，显示时去掉（参考页 shortExtension）
+        // 坐席账号可能带企业前缀，显示时去掉
         extension.value = shortExtension(account, customerPrefix.value);
         appendPanelLog("sip", "ok", "sip", "connection.registered");
       }),
@@ -388,9 +392,9 @@ export function usePhone() {
         refreshCallState();
       }),
       instance.on("call.failed", (event) => {
-        // 本机自己结束的（挂断 / 拒接 / 振铃中取消）不算失败：参考页就是这个规则
-        //（`if (data.originator !== 'local') setError('呼叫失败')`）——点了挂断却弹一句
-        // 「呼叫失败 / CALL_OPERATION_NOT_ALLOWED」就是这么来的。
+        // 本机自己结束的（挂断 / 拒接 / 振铃中取消）不算失败：JsSIP 把它们也归到
+        // failed 事件上（cause.originator === 'local'），只有对端导致的失败才算真失败 ——
+        // 否则点了挂断却会弹一句「呼叫失败 / CALL_OPERATION_NOT_ALLOWED」。
         const local = isLocalFailure(event.error);
         if (local) {
           appendFlowLog("info", "call", `本机结束呼叫 ${sipEventDetail(event)}`);
@@ -418,7 +422,7 @@ export function usePhone() {
   }
 
   // ---------- 客户端生命周期 ----------
-  /** 坐席账号就绪：两条路共用（分机前缀给页面显示，内呼时还要拼在号码前） */
+  /** 坐席账号就绪：分机前缀给标题栏显示，内呼时还要拼在号码前 */
   function applySeatAccount(account: SeatAccount) {
     customerPrefix.value = String(account.customerPrefix || "");
     appendFlowLog(
@@ -428,42 +432,49 @@ export function usePhone() {
     );
   }
 
+  /** 建客户端（会话来源 + SDK 选项）：设置是这时候读进去的，之后改了要重建 */
   function createClient(): CCBarClient {
     const options: CCBarClientOptions = {
-      locale: "zh-CN",
       platform: "web",
       // 与页面设置里的「SIP 注册有效期」一致：由 JsSIP 自己续注册，不再叠心跳
       sipKeepaliveSeconds: sipKeepaliveSeconds(),
       // 演示页单标签页，不启用 SharedWorker
       sharedWorker: { enabled: false, fallback: "single-tab" },
     };
-    // 页面只换票（/ref/get-token → server2），取坐席账号、解密、拼会话都由 SDK 自己做
+    // 页面只换票（/get-token → server2），取坐席账号、解密、组装会话都由 SDK 自己做
     sessionProvider = createSdkSessionProvider(config, appendFlowLog, applySeatAccount);
+    // 记下这个客户端是按哪份设置建的：签入时用它判断要不要重建
+    clientConfigKey = configKey(config);
     return new CCBarClient({ ...options, sessionProvider });
   }
 
-  /** 建客户端并订阅事件；失败（例如 SDK 版本太老）返回 false，原因写到红字行 */
-  function mountClient(): boolean {
-    try {
+  /**
+   * 签入前确保客户端与当前设置一致，返回可用的客户端。
+   * 客户端是建的时候把设置读进去的（host / 软电话地址 / 注册有效期都是），之后改了不会自动生效 ——
+   * 所以这里比一下指纹，变了就按新设置重建（签入按钮在已连接时禁用，重建只可能发生在空闲态）。
+   * 建失败就把错误抛给 run()，由红字行显示原因。
+   */
+  function ensureClient(): CCBarClient {
+    if (!client.value || configKey(config) !== clientConfigKey) {
+      disposeClient();
       client.value = createClient();
-    } catch (error) {
-      client.value = undefined;
-      showError(error instanceof Error ? error.message : error);
-      return false;
+      subscribe(client.value);
     }
-    subscribe(client.value);
-    return true;
+    return client.value;
   }
 
   function mount() {
     // 必须在 SDK 第一次 connect（懒加载 JsSIP）之前打开 SIP 原文
     unsubscribeSipDebug = enableJsSipDebug((level, text) => appendPanelLog("sip", level, "jssip", text));
-    if (!mountClient()) return;
-    appendFlowLog(
-      "info",
-      "app",
-      "页面已就绪，等待签入",
-    );
+    try {
+      client.value = createClient();
+      subscribe(client.value);
+      appendFlowLog("info", "app", "页面已就绪，等待签入");
+    } catch (error) {
+      // 设置还没填（例如 host 为空）时建不出客户端：红字行给原因，填完设置再签入会重建
+      client.value = undefined;
+      showError(error instanceof Error ? error.message : error);
+    }
   }
 
   function disposeClient() {

@@ -10,7 +10,7 @@ import {
   stringifyLog,
 } from "../src/lib/logs.ts";
 
-test("日志文本与参考页 stringifyLog 一致，token 打码", () => {
+test("日志文本：字符串原样、Error 取 message、其余 JSON，token 打码", () => {
   assert.equal(stringifyLog(null), "");
   assert.equal(stringifyLog("hello"), "hello");
   assert.equal(stringifyLog(new Error("boom")), "boom");
@@ -21,7 +21,7 @@ test("日志文本与参考页 stringifyLog 一致，token 打码", () => {
   );
 });
 
-test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页词汇", () => {
+test("连接 / 通话 / 坐席三套状态文案齐备，class 用 ccbar_*_status_*", () => {
   assert.deepEqual(connectionStatus.registered, { text: "已注册", tone: "reg" });
   assert.equal(connectionStatus.connecting.text, "连接中");
   assert.equal(connectionStatus.connected.text, "已连接");
@@ -29,31 +29,31 @@ test("连接 / 通话 / 坐席三套状态文案齐备，class 沿用参考页�
   assert.equal(callStatus.idle.text, "空闲");
   assert.equal(callStatus.dialing.text, "呼出中");
   assert.equal(callStatus.ringing.text, "振铃中");
-  // 参考页没有「接通中」：200 OK 一到（isEstablished() 成立）就是 talking
+  // 没有「接通中」这一档：200 OK 一到就算通话中
   assert.equal(callStatus.connecting.text, "通话中");
   assert.equal(callStatus.connecting.tone, "talking");
   assert.equal(callStatus.active.text, "通话中");
   assert.equal(callStatus.held.text, "保持中");
   assert.equal(agentStatus.available.text, "在线");
   assert.equal(agentStatus.break.text, "休息");
-  // 参考页 CSS 里存在的 serv class 就这几个
+  // serv 标签的 class 就这几个
   for (const { tone } of Object.values(callStatus)) {
     assert.ok(["idle", "busy", "calling", "talking", "hold"].includes(tone), tone);
   }
 });
 
-test("SIP 标签对齐参考页：只有「已注册」是绿的，断链显示「未注册」", () => {
-  // ccbar.js updateUIStatus：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}`
+test("SIP 标签：只有「已注册」是绿的，断链显示「未注册」", () => {
+  // 配色：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}`
   for (const [state, { tone }] of Object.entries(connectionStatus)) {
     assert.equal(tone === "reg", state === "registered", `${state} 的配色与 ccbar 不一致`);
   }
   // 连上了但还没注册成功（connected）仍然按灰的展示
   assert.equal(connectionStatus.connected.tone, "unreg");
-  // SDK 的「重连中」在参考页里没有这个概念：断链统一显示「未注册」，细节只在日志里
+  // SDK 的「重连中」断链时统一显示「未注册」，细节只在日志里
   assert.deepEqual(connectionStatus.reconnecting, { text: "未注册", tone: "unreg" });
 });
 
-test("失败提示：错误码换成中文，其它文案原样（参考页的提示都是中文）", () => {
+test("失败提示：错误码换成中文，其它文案原样", () => {
   assert.equal(messageText("CALL_OPERATION_NOT_ALLOWED"), "呼叫失败");
   assert.equal(messageText("CALL_BUSY"), "对方忙");
   assert.equal(messageText("MEDIA_PERMISSION_DENIED"), "麦克风权限被拒绝");

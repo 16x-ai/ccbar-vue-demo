@@ -97,8 +97,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_signin____"
             class="ccbar_items btn-primary"
-            :disabled="!!phone.busy.value || phone.connected.value"
-            @click="phone.run('签入', phone.signIn)"
+            :disabled="phone.busy.value || phone.connected.value"
+            @click="phone.run(phone.signIn)"
           >
             签入
           </button>
@@ -106,8 +106,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_signou____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value"
-            @click="phone.run('退签', phone.signOut)"
+            :disabled="phone.busy.value || !phone.connected.value"
+            @click="phone.run(phone.signOut)"
           >
             退签
           </button>
@@ -121,8 +121,8 @@ function saveSettings() {
           <button
             type="button"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value || !phone.number.value.trim()"
-            @click="phone.run('外呼', () => phone.dial(phone.number.value))"
+            :disabled="phone.busy.value || !phone.connected.value || !phone.number.value.trim()"
+            @click="phone.run(() => phone.dial(phone.number.value))"
           >
             外呼
           </button>
@@ -130,8 +130,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_inside____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value || !phone.number.value.trim()"
-            @click="phone.run('内呼', () => phone.dial(phone.number.value, true))"
+            :disabled="phone.busy.value || !phone.connected.value || !phone.number.value.trim()"
+            @click="phone.run(() => phone.dial(phone.number.value, true))"
           >
             内呼
           </button>
@@ -139,8 +139,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_hangup____"
             class="ccbar_items btn-danger"
-            :disabled="!!phone.busy.value || !hasCall"
-            @click="phone.run('挂断', phone.hangup)"
+            :disabled="phone.busy.value || !hasCall"
+            @click="phone.run(phone.hangup)"
           >
             挂断
           </button>
@@ -148,8 +148,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_transo____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !hasCall || !phone.number.value.trim()"
-            @click="phone.run('转接', () => phone.transfer(phone.number.value))"
+            :disabled="phone.busy.value || !hasCall || !phone.number.value.trim()"
+            @click="phone.run(() => phone.transfer(phone.number.value))"
           >
             转接
           </button>
@@ -157,8 +157,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_cahold____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || phone.callState.value !== 'active'"
-            @click="phone.run('保持', phone.hold)"
+            :disabled="phone.busy.value || phone.callState.value !== 'active'"
+            @click="phone.run(phone.hold)"
           >
             保持
           </button>
@@ -166,8 +166,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_unhold____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || phone.callState.value !== 'held'"
-            @click="phone.run('恢复', phone.resume)"
+            :disabled="phone.busy.value || phone.callState.value !== 'held'"
+            @click="phone.run(phone.resume)"
           >
             恢复
           </button>
@@ -181,8 +181,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_set_id____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value"
-            @click="phone.run('空闲', () => phone.setAgent('available'))"
+            :disabled="phone.busy.value || !phone.connected.value"
+            @click="phone.run(() => phone.setAgent('available'))"
           >
             空闲
           </button>
@@ -190,8 +190,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_set_bu____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value"
-            @click="phone.run('置忙', phone.setBusy)"
+            :disabled="phone.busy.value || !phone.connected.value"
+            @click="phone.run(phone.setBusy)"
           >
             置忙
           </button>
@@ -199,8 +199,8 @@ function saveSettings() {
             type="button"
             id="____ccbar_set_re____"
             class="ccbar_items"
-            :disabled="!!phone.busy.value || !phone.connected.value"
-            @click="phone.run('休息', () => phone.setAgent('break'))"
+            :disabled="phone.busy.value || !phone.connected.value"
+            @click="phone.run(() => phone.setAgent('break'))"
           >
             休息
           </button>
@@ -228,9 +228,9 @@ function saveSettings() {
     <IncomingCallModal
       v-if="phone.incoming.value.length"
       :calls="phone.incoming.value"
-      :busy="!!phone.busy.value"
-      @answer="(callId) => phone.run('接听', () => phone.answerCall(callId))"
-      @reject="(callId) => phone.run('拒接', () => phone.rejectCall(callId))"
+      :busy="phone.busy.value"
+      @answer="(callId) => phone.run(() => phone.answerCall(callId))"
+      @reject="(callId) => phone.run(() => phone.rejectCall(callId))"
     />
   </div>
 </template>

@@ -23,10 +23,10 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 test("坐席状态映射：忙碌与休息都是 break，用 reason 区分", () => {
-  assert.deepEqual(SEAT_STATUS.available.request, { status: "available", reason: "空闲" });
-  assert.deepEqual(SEAT_STATUS.busy.request, { status: "break", reason: "忙碌" });
-  assert.deepEqual(SEAT_STATUS.break.request, { status: "break", reason: "休息" });
-  assert.deepEqual(SEAT_STATUS.offline.request, { status: "offline", reason: "" });
+  assert.deepEqual(SEAT_STATUS.available, { status: "available", reason: "空闲", platform: "Available" });
+  assert.deepEqual(SEAT_STATUS.busy, { status: "break", reason: "忙碌", platform: "On Break" });
+  assert.deepEqual(SEAT_STATUS.break, { status: "break", reason: "休息", platform: "On Break" });
+  assert.deepEqual(SEAT_STATUS.offline, { status: "offline", reason: "", platform: "Logged Out" });
 });
 
 /** 按平台同一套参数造 SIP 密码密文：AES-128-CBC / Pkcs7 / Base64（与 seat/account/get 返回的 password 同构） */
@@ -40,7 +40,7 @@ function encryptSeatPassword(plain: string): string {
 }
 
 /**
- * 假环境：页面只打 /ref/get-token（server2 那个口子），
+ * 假环境：页面只打 /get-token（server2 那个口子），
  * 之后的 seat/account/get、seats/set-status 都是 SDK 直接从浏览器打平台的。
  */
 function mockRefPlatform(onToken?: () => Response) {
@@ -61,7 +61,7 @@ function mockRefPlatform(onToken?: () => Response) {
       credentials: init?.credentials,
       ...(headers.Authorization ? { authorization: headers.Authorization } : {}),
     });
-    if (url === "/ref/get-token") {
+    if (url === "/get-token") {
       return onToken?.() ?? jsonResponse({ code: 0, data: { token: "ref-token", expires: 600 } });
     }
     if (url.endsWith("/openapi/token/v1/seat/account/get")) {
@@ -86,7 +86,7 @@ function mockRefPlatform(onToken?: () => Response) {
   };
 }
 
-test("签入：页面只打一次 /ref/get-token，取账号与解密都由 SDK 自己做", async () => {
+test("签入：页面只打一次 /get-token，取账号与解密都由 SDK 自己做", async () => {
   const { calls, restore } = mockRefPlatform();
   try {
     const accounts: Array<Record<string, unknown>> = [];
@@ -97,7 +97,7 @@ test("签入：页面只打一次 /ref/get-token，取账号与解密都由 SDK 
 
     // 页面上只出现一次取票；seat/account/get 是 SDK 自己打的
     assert.deepEqual(calls.map((call) => call.url), [
-      "/ref/get-token",
+      "/get-token",
       "https://api.example.test/openapi/token/v1/seat/account/get",
     ]);
     // 直连 server2 时也要能用：取票不带 cookie（它只回显 Origin，不发 Allow-Credentials）
@@ -129,7 +129,7 @@ test("签入：置忙仍然打平台 seats/set-status，用的是坐席账号，
     // 会话软电话地址里那张票就够用：全程只换过一次票
     assert.equal(status[0]?.authorization, "ref-token");
     assert.deepEqual(status[0]?.body, { extension: "p8001", status: "On Break", reason: "忙碌" });
-    assert.equal(calls.filter((call) => call.url === "/ref/get-token").length, 1);
+    assert.equal(calls.filter((call) => call.url === "/get-token").length, 1);
   } finally {
     restore();
   }

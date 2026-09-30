@@ -23,7 +23,7 @@ for (const host of ["127.0.0.1", "localhost", "::1"]) noProxy.add(host);
 process.env.NO_PROXY = [...noProxy].join(",");
 process.env.no_proxy = process.env.NO_PROXY;
 
-// 取票服务：server2/ 是 xcall 参考实现那套（CommonJS、独立端口），页面只对它换一次票。
+// 取票服务：server2/ 是本仓库的示例实现（CommonJS、独立端口），页面只对它换一次票。
 // 两处顺序有讲究：
 //   1) CCBAR_DEMO=1 必须在 require 之前设 —— server2 在模块加载时就读它，否则 /get-token 一律 403
 //   2) require 必须在 loadEnvFile 之后 —— server2/get-token.js 也从环境变量读兜底配置

@@ -37,25 +37,27 @@ function forwardHeaders(source: Record<string, string | string[] | undefined>) {
   return headers;
 }
 
-/** 一条代理规则：`prefix` 命中后转发到 `target`；`stripPrefix` 用于去掉前缀（server2 的路由不带前缀） */
-type ProxyRoute = { prefix: string; target: string; stripPrefix?: string };
+/** 一条代理规则：`prefix` 命中后把路径原样转发到 `target` */
+type ProxyRoute = { prefix: string; target: string };
 
 function refTokenProxyPlugin(refOrigin: string): Plugin {
-  // /ref/：取票口 —— 转发到 server2（xcall 参考实现那套服务）并把 /ref 去掉，server2 自己认 /get-token
-  const routes: ProxyRoute[] = [{ prefix: "/ref/", target: refOrigin, stripPrefix: "/ref" }];
+  // /get-token：取票口 —— 转发到 server2（示例取票服务），server2 认的就是这个路径
+  const routes: ProxyRoute[] = [{ prefix: "/get-token", target: refOrigin }];
 
   return {
     name: "ccbar-ref-token-proxy",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url || "";
-        const route = routes.find((item) => url === item.prefix || url.startsWith(item.prefix));
+        const route = routes.find(
+          (item) =>
+            url === item.prefix || url.startsWith(`${item.prefix}/`) || url.startsWith(`${item.prefix}?`),
+        );
         if (route === undefined) {
           next();
           return;
         }
-        const forwardedUrl = route.stripPrefix ? url.replace(route.stripPrefix, "") : url;
-        const target = new URL(forwardedUrl, route.target);
+        const target = new URL(url, route.target);
         const headers = forwardHeaders(req.headers);
         headers.host = target.host;
         const proxyReq = http.request(
@@ -136,14 +138,7 @@ export default defineConfig(({ mode }) => {
       // 只有走本地源码时才需要排除预打包；用 npm 包时要让 Vite 正常预打包
       ...(useLocalSdk ? { exclude: ["@16x/webphone-sdk"] } : {}),
     },
-    plugins: [
-      refTokenProxyPlugin(refOrigin),
-      vue({
-        template: {
-          compilerOptions: { isCustomElement: (tag) => tag === "xcall-ccbar" },
-        },
-      }),
-    ],
+    plugins: [refTokenProxyPlugin(refOrigin), vue()],
     server: {
       host: "127.0.0.1",
       port: 5173,

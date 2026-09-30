@@ -1,21 +1,22 @@
 # CC Bar Vue 嵌入示例
 
-给客户看的最小接入页：**Vue 3 + 坐席条 + 日志**。界面、日志与状态语义对齐 `D:\code\ccbar\index.html`（参考页），软电话用 **npm 上的 `@16x/webphone-sdk`**（`import { CCBarClient }`）。
+给客户看的最小接入页：**Vue 3 + 坐席条 + 日志**。软电话用 **npm 上的 `@16x/webphone-sdk`**（`import { CCBarClient }`），会话由 SDK 自己拼 —— 页面只向同源取票口换一张 fs token。
 
-> 交付给客户的完整文档在 **[docs/前端接入文档.md](docs/前端接入文档.md)**：目录、接口契约、部署反代、排障表。README 只留最短的上手与维护说明。
+> 交付给客户的完整文档在 **[docs/前端接入文档.md](docs/前端接入文档.md)**：接入链路、浏览器端初始化、坐席状态、业务 API 与事件、配置项、排障表。README 只留最短的上手与维护说明。
 
 ## 5 分钟上手
 
-```powershell
-cd D:\code\ccbar-vue-demo
-copy .env.example .env     # 可选；默认配置就能跑通本地代理
+```bash
+cd ccbar-vue-demo
+cp .env.example .env       # 可选；默认配置就能跑通本地代理（Windows: copy .env.example .env）
 npm install
 npm run dev                # 页面 http://127.0.0.1:5173 ；取票服务 http://127.0.0.1:3100
 ```
 
-打开页面 →「设置」填 **API 主机 / API KEY / API SECRET / 内部分机** →「保存」→「签入」。
+打开页面 →「设置」填 **API 主机 / API KEY / API SECRET / 内部分机 / 软电话 WSS**（五项都必填）→「保存」→「签入」。
+（设置改完不必刷新页面：点「签入」会按当前设置重建客户端。）
 
-> 页面只向同源的 `/ref/get-token` 换一张票（dev 由 Vite 转给取票服务），取坐席账号、解 SIP 密码、
+> 页面只向同源的 `/get-token` 换一张票（dev 由 Vite 转给取票服务），取坐席账号、解 SIP 密码、
 > 拼会话都由 SDK 自己来；取票口不通时会在红字行给出服务端/平台的原话。
 
 预期现象：
@@ -35,7 +36,7 @@ npm run dev                # 页面 http://127.0.0.1:5173 ；取票服务 http:/
 | 退签 | `client.disconnect()` |
 | 外呼 | `client.dial({ destination })` |
 | 外呼 / 内呼带自定义参数 | `client.dial({ destination, userdata })`：代码里的 `USERDATA` 常量非空时原样写进 INVITE 的 `X-User-Data` 头，由平台/服务端读。只能可见 ASCII，留空＝不带头（见下） |
-| 内呼 | `client.dial({ destination: 前缀+分机号 })`：「内呼」就是把企业前缀（`customerPrefix`）拼在号码前，和参考实现 `insideCall` 一致 |
+| 内呼 | `client.dial({ destination: 前缀+分机号 })`：「内呼」就是把企业前缀（`customerPrefix`）拼在号码前 —— 平台靠「前缀 + 分机号」认内线 |
 | 挂断 / 保持 / 恢复 / 转接 | 活动通话上的 `hangup()` / `hold()` / `resume()` / `transfer({ type: 'blind', target })` |
 | 接听 / 拒接 | `client.answer(callId)` / `call.reject({ reason })` |
 | 空闲 / 休息 | `client.setAgentStatus('available' \| 'break')` → 平台的 `Set Agent Status`（Available / On Break+休息） |
@@ -64,9 +65,9 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 
 ## 接口链路（页面只换票，会话由 SDK 拼）
 
-页面只打**一个**同源接口：`POST /ref/get-token`（本地示例是 `server2/`，即 xcall 参考实现那套取票服务）。
+页面只打**一个**同源接口：`POST /get-token`（本仓库的示例实现是 `server2/`）。
 
-1. 页面 → 取票服务：`POST /ref/get-token`，body `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
+1. 页面 → 取票服务：`POST /get-token`，body `{ extension, host?, appKey?, appSecret?, sipWs?, registerExpires? }`
 2. 取票服务按平台契约加签（`X-Ca-Key` / `X-Ca-Timestamp` / `X-Ca-Nonce` / `X-Ca-Signature`，HMAC-SHA256）
    打 `POST {API主机}/openapi/v1/token/fs` → `{ token, expires }`，原样回给页面（加签用的 SECRET 只在服务端）
 3. 这条票之后交给 **SDK 的 legacy 实现**（`@16x/webphone-sdk/legacy` 的 `createLegacySessionProvider`）：
@@ -84,17 +85,17 @@ const USERDATA = "";   // 例：'tenant=acme;agent=7'
 
 | 变量 | 作用 |
 |---|---|
-| `VITE_REF_TOKEN_API` | 取票口地址，默认同源 `/ref/get-token` |
+| `VITE_REF_TOKEN_API` | 取票口地址，默认同源 `/get-token` |
 | `REF_TOKEN_PORT` | 本地取票服务端口，默认 3100（占用时自动往后找） |
 | `CC_API_HOST` / `CC_API_APP_KEY` / `CC_API_APP_SECRET` | 取票服务打平台接口的兜底配置（页面设置里的值优先） |
 
-**软电话 WSS 是必填项**（设置里填 `wss://…/api/fs/sip-ws`）：SDK 按坐席账号的域名拼地址时，这个值直接盖在会话的 `transport.wssUrl` 上；`SIP 注册有效期`由 SDK 写进会话的 `sip.registerExpires`（留空默认 600 秒；SDK 拿不到有效值时才回退 300 秒）。
+**软电话 WSS 是必填项**（设置里填 `wss://…/api/fs/sip-ws`，完整地址）：它直接作为会话的 `transport.wssUrl`，SDK 只在上面挂 `?token=`，**不再按坐席账号的域名 / 端口拼地址**（缺了或不是 `wss://` / `ws://` 时签入会报 `CONFIG_INVALID`）；`SIP 注册有效期`由 SDK 写进会话的 `sip.registerExpires`（默认 600 秒）。
 
 SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、只由 JsSIP 每 10 分钟续一次注册；链路上有 nginx/NAT 空闲超时（nginx 默认 60 秒）时会被静默掐断长连接，把 `VITE_SIP_KEEPALIVE=25` 打开心跳即可。
 
 ### 换成你们自己的取票口
 
-取票地址有两种改法（都不需要动 SDK 代码）：
+取票地址可以这样改（不需要动 SDK 代码）：
 
 - **代码里改**：`src/lib/session.ts` 的 `refTokenUrl()` —— 留空按约定拼同源路径，填了就原样使用。
 - **部署时改**：环境变量 `VITE_REF_TOKEN_API=/your/token/path`（优先级高于常量，构建时注入）。
@@ -112,9 +113,9 @@ SIP 保活默认与注册有效期一致（600 秒），即不额外发心跳、
 
 | 路径 | 转发到 |
 |---|---|
-| `/ref/get-token` | 你们的取票服务（本地开发是 `npm run dev` 起的 server2，端口 3100） |
+| `/get-token` | 你们的取票服务（本地开发是 `npm run dev` 起的 server2，端口 3100） |
 
-dev 环境里 `/ref/get-token` 由 Vite 转给取票服务；线上用 nginx 做同样的反代 —— 或者构建时直接把
+dev 环境里 `/get-token` 由 Vite 转给取票服务；线上用 nginx 做同样的反代 —— 或者构建时直接把
 `VITE_REF_TOKEN_API` 指到你们的地址，省掉反代。没有反代时签入会卡在「取票」那一步，红字行给出原话。
 
 ## 已知环境行为
@@ -139,11 +140,11 @@ dev 环境里 `/ref/get-token` 由 Vite 转给取票服务；线上用 nginx 做
 
 `enableJsSipDebug()` 在 `onMounted` 里第一时间执行 —— JsSIP 是首次 `connect()` 时懒加载的，debug 包在模块初始化时读一次 `localStorage.debug`，**晚于那一刻设置就不生效**（这也是为什么它不能做成「保存后再生效」的设置项）。
 
-## SDK 来源与回退
+## SDK 来源
 
-- 页面 `import { CCBarClient } from "@16x/webphone-sdk"`。
-- 本地若存在 `D:\code\ccbar-web-sdk\src`，Vite 会 alias 到**源码**（方便边改 SDK 边调）；客户机器上没有该目录时自动用 **npm 包**。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
-- 仓库里只有 npm 包这一条链，没有 `<script>` 加载的脚本版 SDK：`public\` 下不放 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js`，交付包里不会混进另外一套 1.1MB 的文件。参考实现看 `D:\code\xcall\ccbar`（带 token 的 fork）和 `D:\code\ccbar`（能打通外呼的参考页）。
+- 页面 `import { CCBarClient } from "@16x/webphone-sdk"`，会话来源用子入口 `@16x/webphone-sdk/legacy` 的 `createLegacySessionProvider`；版本见 `package.json`（`^3.1.11`：`sipWsUrl` 必填、SDK 不再按账号域名拼软电话地址）。
+- 仓库里只有 npm 包这一条链：没有 `<script>` 加载的脚本版 SDK，`public/` 下也没有别的运行时文件，交付包不会混进第二套 SDK。
+- 开发机上若存在并列的 SDK 源码目录，Vite 会 alias 到源码（方便边改 SDK 边调），没有该目录时自动用 npm 包。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
 
 ## 脚本
 
@@ -167,5 +168,5 @@ src/lib/sipDebug.ts             SIP 原文：打开 JsSIP debug 并接住 consol
 src/lib/logs.ts                 日志格式化与状态文案（纯函数，有单测）
 src/lib/helpers.ts              地址校验、分机前缀处理
 server/dev.mjs                  一条命令同时起取票服务与 Vite
-server2/                        本地取票服务（xcall 参考实现那套；生产换成你们自己的）
+server2/                        本地取票服务（把分机号换成一张 fs token；生产换成你们自己的）
 ```

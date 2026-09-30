@@ -80,38 +80,17 @@ function createAuthentication(content, appKey, appSecret, now = Date.now()) {
   };
 }
 
-async function getToken({
-  isPublic = true,
-  extension,
-  userId,
-  departmentId,
-  host = DEFAULT_HOST,
-  appKey,
-  appSecret,
-} = {}) {
+async function getToken({ extension, host = DEFAULT_HOST, appKey, appSecret } = {}) {
   const resolvedKey = requireCredential(appKey, 'CC_API_APP_KEY', 'API KEY');
   const resolvedSecret = requireCredential(appSecret, 'CC_API_APP_SECRET', 'API SECRET');
   const server = assertAllowedTokenHost(host);
 
-  // openapi 契约(internal/model/dto/token):
-  //   /openapi/v1/token/fs       -> { extension }                 (公开坐席, isPublic=true)
-  //   /openapi/v1/token/fs/third -> { userId, departmentId }      (三方用户, isPublic=false)
-  let apiPath;
-  let body;
-  if (isPublic) {
-    if (!extension) {
-      throw new Error('分机号 extension 不能为空');
-    }
-    apiPath = '/openapi/v1/token/fs';
-    body = JSON.stringify({ extension: String(extension).trim() });
-  } else {
-    if (!userId || !departmentId) {
-      throw new Error('userId 和 departmentId 均不能为空');
-    }
-    apiPath = '/openapi/v1/token/fs/third';
-    body = JSON.stringify({ userId, departmentId });
+  // openapi 契约(internal/model/dto/token)：/openapi/v1/token/fs，body { extension }
+  if (!extension) {
+    throw new Error('分机号 extension 不能为空');
   }
-  const API_URL = `${server.protocol}://${server.host}${apiPath}`;
+  const body = JSON.stringify({ extension: String(extension).trim() });
+  const API_URL = `${server.protocol}://${server.host}/openapi/v1/token/fs`;
   const authentication = createAuthentication(body, resolvedKey, resolvedSecret);
   const timeoutMs = 20_000;
   let response;
@@ -151,12 +130,8 @@ async function getToken({
 }
 
 async function main() {
-  const isPublic = (process.env.CC_IS_PUBLIC || '1') !== '0';
   const result = await getToken({
-    isPublic,
     extension: process.env.CC_EXTENSION,
-    userId: process.env.CC_USER_ID,
-    departmentId: process.env.CC_DEPARTMENT_ID,
     host: process.env.CC_API_HOST,
     appKey: process.env.CC_API_APP_KEY,
     appSecret: process.env.CC_API_APP_SECRET,

@@ -1,5 +1,5 @@
-// 日志与状态文案：日志部分逐条对齐 D:\code\ccbar\index.html（参考页）；
-// 状态文案对到 npm 版 SDK（@16x/webphone-sdk）的连接/通话/坐席三套状态，class 仍沿用参考页的 ccbar_*_status_*。
+// 日志与状态文案：日志格式是 `HH:MM:SS.mmm [来源] 内容`，状态文案对到 npm 版 SDK
+// （@16x/webphone-sdk）的连接/通话/坐席三套状态，class 用 ccbar_*_status_*。
 // 这里保持纯函数、不依赖 vue，便于 node --test 直接覆盖。
 
 export type LogPanel = "flow" | "sip";
@@ -20,9 +20,6 @@ export type CallState =
 // SDK：setAgentStatus 的取值；busy 由页面自己调平台的坐席状态接口得到（SDK 没有这个取值）
 export type AgentState = "available" | "break" | "busy" | "offline";
 
-// 与参考页 hookConsoleToFlowLog 一致：只有命中这些关键字的 console 输出才进 SIP 面板
-export const SIP_LOG_RE = /JsSIP|WebSocket|Registration|registrar|sip:|UA\[|transport|WebPhone/i;
-
 export type LogLine = {
   id: number;
   panel: LogPanel;
@@ -32,7 +29,7 @@ export type LogLine = {
   time: string;
 };
 
-// 工作（坐席）标签：值 / 文案 / 参考页的 class 后缀
+// 工作（坐席）标签：值 / 文案 / class 后缀
 export const agentStatus: Record<AgentState, { text: string; tone: string }> = {
   available: { text: "在线", tone: "online" },
   break: { text: "休息", tone: "reset" },
@@ -40,12 +37,10 @@ export const agentStatus: Record<AgentState, { text: string; tone: string }> = {
   offline: { text: "离线", tone: "offline" },
 };
 
-// 服务（通话）标签：把 SDK 的 8 个 CallState 归到参考页的 class 词汇上。
+// 服务（通话）标签：把 SDK 的 8 个 CallState 归到 空闲/振铃中/呼出中/通话中/保持中 这几档上。
 //
-// 参考页没有「接通中」这一档（serv 只有 空闲/振铃中/呼出中/通话中/保持中/转接中）：
-// `_refreshServiceStatus` 里 isEstablished() 一成立就是 talking，而 200 OK 一到
-// isEstablished() 就为真 —— 所以「已应答但媒体还没连上」这段（SDK 的 connecting）
-// 在坐席条上显示的就是「通话中」，这里照做，别自作主张加一档。
+// 这里没有「接通中」这一档：200 OK 一到就算通话中，所以「已应答但媒体还没连上」这段
+// （SDK 的 connecting）显示的就是「通话中」，别自作主张加一档。
 export const callStatus: Record<CallState | "idle", { text: string; tone: string }> = {
   idle: { text: "空闲", tone: "idle" },
   new: { text: "新建", tone: "idle" },
@@ -58,14 +53,13 @@ export const callStatus: Record<CallState | "idle", { text: string; tone: string
   failed: { text: "失败", tone: "busy" },
 };
 
-// SIP / 连接标签：文案与配色对齐参考页的 getStatusText + updateUIStatus：
+// SIP / 连接标签：文案与配色用这套约定：
 //   文案：unreg/unregistered=未注册、connecting=连接中、connected=已连接、registered=已注册、
 //         failed=注册失败、error=错误
 //   配色：`ccbar_sip_status_${status === 'registered' ? 'reg' : 'unreg'}` —— **只有「已注册」是绿的**，
 //         连上了但还没注册成功（connected）仍然是灰的。
-// 两点与 SDK 状态的对应：SDK 的 offline 对应参考页的 unreg/unregistered；
-// 「重连中」（SDK 的 reconnecting）参考页没有这个概念 —— 断链时它显示「未注册」，
-// 重连过程只写进日志（见 usePhone 的「重连中（第 N 次）」）。所以这里也按「未注册」展示。
+// 与 SDK 状态的对应：SDK 的 offline 对应 unreg/unregistered；断链重连（SDK 的 reconnecting）
+// 时显示「未注册」，重连过程只写进日志（见 usePhone 的「重连中（第 N 次）」）。
 export const connectionStatus: Record<ConnectionState | "registered", { text: string; tone: string }> =
   {
     registered: { text: "已注册", tone: "reg" },
@@ -76,9 +70,8 @@ export const connectionStatus: Record<ConnectionState | "registered", { text: st
     failed: { text: "注册失败", tone: "unreg" },
   };
 
-// 失败提示：参考页的提示都是中文（`if (data.originator !== 'local') setError('呼叫失败')`），
-// 不把 SDK 的错误码丢给用户 —— CCBarError 的 message 就是错误码，直接显示在红字行没人看得懂。
-// 错误码本身仍然留在日志里（showError 双写：红字行给中文、日志给原文）。
+// 失败提示都用中文，不把 SDK 的错误码丢给用户 —— CCBarError 的 message 就是错误码，
+// 直接显示在红字行没人看得懂。错误码本身仍然留在日志里（showError 双写：红字行给中文、日志给原文）。
 export const errorText: Record<string, string> = {
   CALL_OPERATION_NOT_ALLOWED: "呼叫失败",
   CALL_INVALID_DESTINATION: "号码格式不正确",
@@ -118,38 +111,48 @@ export function messageText(message: string): string {
 /**
  * 这通呼叫是不是「本机自己结束的」（挂断 / 拒接 / 振铃中取消）。
  * JsSIP 把本机取消也归到 failed 事件上（cause.originator === 'local'），
- * 参考页就是靠它区分「自己挂的」和「真失败」：只有后者才提示「呼叫失败」。
+ * 靠它区分「自己挂的」和「真失败」：只有后者才提示「呼叫失败」。
  */
-export function isLocalFailure(value: unknown, depth = 0): boolean {
+export function isLocalFailure(value: unknown): boolean {
+  return isLocalOriginator(value, 0);
+}
+
+/** 顺着 cause / error 链找 originator（JsSIP 的失败对象最多套三层） */
+function isLocalOriginator(value: unknown, depth: number): boolean {
   if (value == null || depth > 3 || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   if (record.originator === "local") return true;
-  return isLocalFailure(record.cause, depth + 1) || isLocalFailure(record.error, depth + 1);
+  return isLocalOriginator(record.cause, depth + 1) || isLocalOriginator(record.error, depth + 1);
 }
 
-// 参考页只对 JSON 分支打码；本页的会话票据/软电话 WSS 自带 token，字符串也要打
-const TOKEN_RE = /([?&]token=)[^&"]*/gi;
+/** 敏感值打码：`?token=` / `&token=` 取到串尾，JSON 里的 `"password"` 换成 *** */
+function redact(text: string): string {
+  return text
+    .replace(/([?&]token=)[^&"]*/gi, "$1***")
+    .replace(/"password"\s*:\s*"[^"]*"/g, '"password":"***"');
+}
 
-// 与参考页 stringifyLog 一致：字符串原样、Error 取 message、其余 JSON，token 打码
+// 字符串原样、Error 取 message、其余 JSON，敏感值打码
 export function stringifyLog(value: unknown): string {
   if (value == null) return "";
-  if (typeof value === "string") return value.replace(TOKEN_RE, "$1***");
+  if (typeof value === "string") return redact(value);
   if (value instanceof Error) return value.message;
   try {
-    return JSON.stringify(value).replace(TOKEN_RE, "$1***");
+    return redact(JSON.stringify(value));
   } catch {
-    return String(value).replace(TOKEN_RE, "$1***");
+    return redact(String(value));
   }
 }
 
-// 与参考页 cleanJsSipText 一致：丢掉 %c 的颜色参数，password / token 打码，压平空白
+// 丢掉 %c 的颜色参数、压平空白（敏感值由 stringifyLog 打码）
 export function cleanJsSipText(args: unknown[]): string {
-  return args
-    .filter((arg) => typeof arg !== "string" || !/^color:\s/i.test(arg))
-    .map(stringifyLog)
-    .join(" ")
-    .replace(/%c/g, "")
-    .replace(/"password"\s*:\s*"[^"]*"/g, '"password":"***"')
+  return redact(
+    args
+      .filter((arg) => typeof arg !== "string" || !/^color:\s/i.test(arg))
+      .map(stringifyLog)
+      .join(" ")
+      .replace(/%c/g, ""),
+  )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -196,8 +199,9 @@ export function sipEventDetail(payload: unknown): string {
   return Object.keys(detail).length ? stringifyLog(detail) : "";
 }
 
-// 与参考页 appendPanelLog 一致：HH:MM:SS.mmm
-export function timeStamp(date = new Date()): string {
+// 日志时间：HH:MM:SS.mmm
+export function timeStamp(): string {
+  const date = new Date();
   const pad = (value: number, width = 2) => String(value).padStart(width, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(
     date.getMilliseconds(),

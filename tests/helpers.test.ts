@@ -1,13 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeUserdata, prefixExtension, shortExtension, validateApiHost, validateSipWs } from "../src/lib/helpers.ts";
+import {
+  configKey,
+  normalizeUserdata,
+  prefixExtension,
+  shortExtension,
+  validateApiHost,
+  validateSipWs,
+} from "../src/lib/helpers.ts";
 
 test("API 主机必须由用户填写（留空时报错，不替你猜环境）", () => {
   assert.throws(() => validateApiHost(""), /API 主机/);
   assert.throws(() => validateApiHost("   "), /API 主机/);
 });
 
-test("API 主机和软电话 WSS 校验与旧坐席条一致", () => {
+test("API 主机和软电话 WSS 校验：去空格、去尾斜杠，不改写域名", () => {
   assert.equal(
     validateApiHost("https://call-ng.innopaas.com/"),
     "https://call-ng.innopaas.com",
@@ -39,7 +46,7 @@ test("软电话 WSS 是必填项，且必须是 ws/wss 地址", () => {
   );
 });
 
-test("内呼把企业前缀拼在号码前（与参考实现 insideCall 一致）", () => {
+test("内呼把企业前缀拼在号码前", () => {
   assert.equal(prefixExtension("1002", "p"), "p1002");
   // 已经带前缀的不重复拼
   assert.equal(prefixExtension("p1002", "p"), "p1002");
@@ -60,7 +67,41 @@ test("自定义参数（userdata）：只放行可见 ASCII，其余给中文提
   assert.throws(() => normalizeUserdata("客户=张三"), /可见 ASCII/);
 });
 
-test("显示分机去掉 customerPrefix（与参考页 shortExtension 一致）", () => {
+const baseConfig = {
+  host: "https://api.example.test",
+  appKey: "k",
+  appSecret: "s",
+  extension: "8001",
+  sipWs: "wss://sip.example.test/api/fs/sip-ws",
+  registerExpires: 600,
+};
+
+/**
+ * 指纹的用处：客户端只在建的时候读一次设置，签入前比一下这个值，变了就重建（usePhone 的 ensureClient）。
+ * 所以它必须「同一份设置稳定、任何一个字段变了就变」。
+ */
+test("设置指纹：同一份设置稳定，改任何一项都变", () => {
+  assert.equal(configKey({ ...baseConfig }), configKey({ ...baseConfig }));
+
+  const patches = [
+    { host: "https://other.example.test" },
+    { appKey: "k2" },
+    { appSecret: "s2" },
+    { extension: "8002" },
+    { sipWs: "wss://other.example.test/api/fs/sip-ws" },
+    { registerExpires: 900 },
+  ];
+  for (const patch of patches) {
+    assert.notEqual(configKey({ ...baseConfig, ...patch }), configKey(baseConfig), JSON.stringify(patch));
+  }
+});
+
+test("设置指纹：注册有效期按数字比（表单里的字符串与规整后的数字是同一份设置）", () => {
+  assert.equal(configKey({ ...baseConfig, registerExpires: "600" }), configKey(baseConfig));
+  assert.equal(configKey({ ...baseConfig, registerExpires: "" }), configKey({ ...baseConfig, registerExpires: 0 }));
+});
+
+test("显示分机去掉 customerPrefix", () => {
   assert.equal(shortExtension("p8001", "p"), "8001");
   assert.equal(shortExtension("8001", "p"), "8001");
   assert.equal(shortExtension("p8001", ""), "p8001");

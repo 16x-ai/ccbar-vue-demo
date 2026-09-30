@@ -8,8 +8,6 @@ const { getToken } = require('./get-token');
 const BIND = process.env.CCBAR_BIND || '127.0.0.1';
 const DEMO = process.env.CCBAR_DEMO === '1';
 const MAX_BODY = 64 * 1024;
-const ROOT = __dirname;
-const ROOT_PREFIX = ROOT.endsWith(path.sep) ? ROOT : ROOT + path.sep;
 let listenPort = Number(process.env.PORT) || 3000;
 
 function parseDotEnv(text) {
@@ -44,25 +42,8 @@ function loadDotEnvFile(filePath) {
   });
 }
 
-loadDotEnvFile(path.join(ROOT, '.env'));
-loadDotEnvFile(path.join(ROOT, '.env.example'));
-
-function demoDefaults() {
-  return {
-    host: String(process.env.CC_API_HOST || '').trim(),
-    sipWs: String(process.env.CC_SIP_WS || process.env.CC_SIP_WSS || '').trim(),
-  };
-}
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+loadDotEnvFile(path.join(__dirname, '.env'));
+loadDotEnvFile(path.join(__dirname, '.env.example'));
 
 function corsHeaders(req) {
   const origin = (req && req.headers && req.headers.origin) || '';
@@ -112,29 +93,7 @@ function readBody(req, maxBytes) {
   });
 }
 
-function serveStatic(req, res) {
-  const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  const safePath = urlPath === '/' ? '/index.html' : urlPath;
-  const filePath = path.normalize(path.join(ROOT, safePath));
-
-  if (filePath !== ROOT && !filePath.startsWith(ROOT_PREFIX)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
-  }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-      res.end(err.code === 'ENOENT' ? 'Not Found' : 'Server Error');
-      return;
-    }
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-    res.end(data);
-  });
-}
-
+// 只做一件事：把页面递过来的分机号换成一张 fs token。页面请求体优先，环境变量仅兜底。
 const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || '/').split('?')[0];
 
@@ -144,42 +103,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && (urlPath === '/get-token' || urlPath === '/ccbar/get-token' || urlPath === '/demo/get-token')) {
+  if (req.method === 'POST' && urlPath === '/get-token') {
     if (!DEMO) {
       sendJson(req, res, 403, { code: -1, message: 'get-token disabled; set CCBAR_DEMO=1 for local demo' });
       return;
     }
     try {
       const body = await readBody(req, MAX_BODY);
-      // 页面请求体优先, 环境变量仅兜底
-      const isPublic = body.isPublic !== false;
-      const params = {
-        isPublic,
+      const result = await getToken({
+        extension: body.extension,
         host: body.host || process.env.CC_API_HOST,
         appKey: body.appKey || process.env.CC_API_APP_KEY,
         appSecret: body.appSecret || process.env.CC_API_APP_SECRET,
-      };
-      if (isPublic) {
-        params.extension = body.extension;
-      } else {
-        params.userId = body.userId;
-        params.departmentId = body.departmentId;
-      }
-      const result = await getToken(params);
+      });
       sendJson(req, res, 200, result);
     } catch (error) {
       sendJson(req, res, 500, { code: -1, message: error.message });
     }
-    return;
-  }
-
-  if (req.method === 'GET' && (urlPath === '/defaults' || urlPath === '/ccbar/defaults')) {
-    sendJson(req, res, 200, { code: 0, data: demoDefaults() });
-    return;
-  }
-
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    serveStatic(req, res);
     return;
   }
 
@@ -245,4 +185,4 @@ if (require.main === module) {
   listen();
 }
 
-module.exports = { server, BIND, DEMO, listen, startServer, preferredPort, parseDotEnv, loadDotEnvFile, demoDefaults };
+module.exports = { server, BIND, DEMO, listen, startServer, preferredPort, parseDotEnv, loadDotEnvFile };

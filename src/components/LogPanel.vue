@@ -17,7 +17,7 @@ const panel = ref<Panel>("flow");
 const body = ref<HTMLElement>();
 const lines = computed(() => props.logs.filter((line) => line.panel === panel.value));
 
-// 与参考页一致：新日志进来、或切换页签后滚到底
+// 新日志进来、或切换页签后滚到底
 watch([() => props.logs.length, panel], () => {
   void nextTick(() => {
     const el = body.value;

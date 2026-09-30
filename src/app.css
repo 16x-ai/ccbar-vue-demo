@@ -1,5 +1,5 @@
-/* 坐席条样式：逐行取自 D:\code\ccbar\index.html 的 <style>（第 103–630 行），与参考页保持一致。 */
-/* Vue 版补充：参考页按钮是 <div>，这里用 <button>，需要复位浏览器的默认字体。 */
+/* 坐席条样式：状态标签、按钮、号码框与日志卡片的配色和间距。 */
+/* 按钮用 <button>（不是 <div>），需要复位浏览器的默认字体。 */
 
 :root {
     --bg: #f3f4f6;
@@ -550,7 +550,7 @@ button.ccbar_items,
     font-family: inherit;
 }
 
-/* Vue 版补充：参考页 CSS 缺这三条，按 fork 版的语义配色 */
+/* Vue 版补充：呼出中 / 通话中 / 振铃中三个状态标签的配色 */
 /* 呼出中（未接通）与振铃中同色 */
 .____ccbar____ .ccbar_serv_status_calling {
     background: var(--red-soft);
@@ -561,6 +561,12 @@ button.ccbar_items,
 .____ccbar____ .ccbar_serv_status_talking {
     background: var(--green-soft);
     color: var(--green);
+}
+
+/* 保持中：与「休息」同一套琥珀色（暂停中的语义），区别于红色的呼出/振铃与绿色的通话中 */
+.____ccbar____ .ccbar_serv_status_hold {
+    background: var(--amber-soft);
+    color: var(--amber);
 }
 
 /* Vue 版补充：全屏加载遮罩（签入、设置坐席状态时盖住整页，避免重复点击） */

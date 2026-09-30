@@ -1,5 +1,5 @@
 {
   "type": "commonjs",
   "private": true,
-  "description": "xcall 参考实现那套取票服务（server.js / get-token.js）的原样拷贝。本仓库是 \"type\": \"module\"，这里只声明本目录按 CommonJS 解析，代码一行没改。"
+  "description": "示例取票服务（server.js / get-token.js）：把页面的分机号换成一张 fs token。本仓库是 \"type\": \"module\"，这里只声明本目录按 CommonJS 解析。"
 }

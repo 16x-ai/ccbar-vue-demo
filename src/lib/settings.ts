@@ -15,7 +15,7 @@ export type PhoneConfig = {
   appSecret: string;
   /** 坐席分机号，例如 8001 */
   extension: string;
-  /** 软电话 WSS 覆盖项，留空＝用会话里给的地址 */
+  /** 软电话 WSS 地址（必填）：会话的 transport.wssUrl 直接用它，SDK 不再按账号域名拼 */
   sipWs: string;
   /** SIP 注册有效期（秒），会交给服务端写进会话 */
   registerExpires: number | string;
@@ -25,6 +25,8 @@ export const SETTINGS_KEY = "ccbar.vueDemo.settings";
 export const REGISTER_EXPIRES_DEFAULT = 600;
 const REGISTER_EXPIRES_MIN = 10;
 const REGISTER_EXPIRES_MAX = 3600;
+/** 分机号留空时的占位值（正常都让用户填） */
+const EXTENSION_DEFAULT = "1000";
 
 // 每个客户/环境的接口网关都不一样，所以代码里没有写死的默认值。
 // 交付时可以按客户注入：VITE_API_HOST=https://客户的网关 npm run build
@@ -41,7 +43,7 @@ export function createConfig(): PhoneConfig {
     host: migrateApiHost(saved.host || defaultApiHost()),
     appKey: saved.appKey || "",
     appSecret: saved.appSecret || "",
-    extension: saved.extension || "1000",
+    extension: saved.extension || EXTENSION_DEFAULT,
     sipWs: saved.sipWs || "",
     registerExpires: saved.registerExpires ?? REGISTER_EXPIRES_DEFAULT,
   };
@@ -70,7 +72,7 @@ export function normalizeConfig(config: PhoneConfig): PhoneConfig {
     host,
     appKey: config.appKey.trim(),
     appSecret: config.appSecret.trim(),
-    extension: config.extension.trim() || "1000",
+    extension: config.extension.trim() || EXTENSION_DEFAULT,
     // 必填：validateSipWs 对空值也会报错
     sipWs: validateSipWs(config.sipWs),
     registerExpires: expires,

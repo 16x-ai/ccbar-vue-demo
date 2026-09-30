@@ -9,17 +9,8 @@ test("发布包支持 Node/SSR 导入根入口和诊断子入口", async () => {
   assert.equal(typeof globalThis.window, "undefined");
 });
 
-test("Legacy setBu 明确抛出弃用错误；signOut 可清理未连接实例", async () => {
-  const { CCBarSDK, DeprecatedError } =
-    await import("@16x/webphone-sdk/legacy");
-  const legacy = new CCBarSDK({
-    platform: "web",
-    sessionProvider: {
-      createSession: async () => {
-        throw new Error("本测试不得获取会话");
-      },
-    },
-  });
-  assert.throws(() => legacy.setBu(), DeprecatedError);
-  await legacy.signOut();
+test("取票链路需要的子入口可用：@16x/webphone-sdk/legacy 提供会话来源与解密", async () => {
+  const legacy = await import("@16x/webphone-sdk/legacy");
+  assert.equal(typeof legacy.createLegacySessionProvider, "function");
+  assert.equal(typeof legacy.decryptSipPassword, "function");
 });

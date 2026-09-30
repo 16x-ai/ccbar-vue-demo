@@ -11,18 +11,18 @@
  *   2. 这是 SDK 未公开的调试能力，仅用于演示与排障，不要当成稳定接口。
  */
 
-import { SIP_LOG_RE, cleanJsSipText } from "./logs";
+import { cleanJsSipText } from "./logs";
 import type { LogLevel } from "./logs";
 
-/** 把一条 SIP 原文交给页面（由 usePhone 注入，写进 SIP 面板） */
-export type SipLineFn = (level: LogLevel, text: string) => void;
+/** 只有命中这些关键字的 console 输出才当作 SIP 原文收进面板（JsSIP 的报文与连接日志） */
+const SIP_LOG_RE = /JsSIP|WebSocket|Registration|registrar|sip:|UA\[|transport|WebPhone/i;
 
 const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"] as const;
 
 /**
- * 打开 SIP 原文并把结果接到 onLine；返回一个「取消」函数（页面卸载时调用）。
+ * 打开 SIP 原文并把结果接到 onLine（写进 SIP 面板）；返回一个「取消」函数（页面卸载时调用）。
  */
-export function enableJsSipDebug(onLine: SipLineFn): () => void {
+export function enableJsSipDebug(onLine: (level: LogLevel, text: string) => void): () => void {
   try {
     localStorage.setItem("debug", "JsSIP:*");
   } catch {

@@ -1,17 +1,3 @@
-/**
- * 页面与 SDK 之间的那一层：会话从哪来、坐席状态从哪走。
- *
- * 会话：页面只提供一个「换票口」（`/get-token` → server2，加签用的 SECRET 留在服务端），
- * 剩下的「取坐席账号 → 解 SIP 密码 → 组装会话」全部由 SDK 自己完成（createLegacySessionProvider）；
- * 软电话地址不在 SDK 里拼，用设置里填的那一条（`sipWsUrl`）。
- *
- * 坐席状态：也走这个实现 —— 它从**浏览器**直接请求平台的 `seats/set-status`，
- * 优先用会话软电话地址里拼着的那张 fs token（就是换票口发出去的那一张），不再多换一次票。
- *
- * 换成你们自己的后端时：只要按同样的请求/返回契约实现取票口，这里只改地址；
- * KEY / SECRET 可以完全不进浏览器（页面设置里留空即可）。
- */
-
 import type { SessionProvider } from "@16x/webphone-sdk";
 import { createLegacySessionProvider } from "@16x/webphone-sdk/legacy";
 import type { AgentState, LogLevel } from "./logs";
@@ -93,7 +79,8 @@ export function createSdkSessionProvider(
     // 软电话地址由页面提供（设置里必填）：SDK 只往上挂 ?token=，不按账号的 domain / wssPort 拼
     sipWsUrl: config.sipWs,
     ...(Number(config.registerExpires) > 0 ? { registerExpires: Number(config.registerExpires) } : {}),
-    mobileIncomingEnabled: false, // 会话策略：移动端形态不接来电
+    // 注：移动端来电策略 mobileIncomingEnabled 只在 platform: 'mobile-web' 时才有意义，
+    // 而 usePhone 里固定用桌面形态 platform: 'web'（手机浏览器也按桌面策略接来电），所以这里不传
   });
   const { setAgentStatus } = provider;
   if (!setAgentStatus) {

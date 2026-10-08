@@ -409,7 +409,6 @@ export function usePhone() {
   // ---------- 客户端生命周期 ----------
   function createClient(): CCBarClient {
     const options: CCBarClientOptions = {
-      locale: "zh-CN",
       platform: "web",
       // 与页面设置里的「SIP 注册有效期」一致：由 JsSIP 自己续注册，不再叠心跳
       sipKeepaliveSeconds: sipKeepaliveSeconds(),

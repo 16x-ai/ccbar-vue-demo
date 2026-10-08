@@ -178,6 +178,9 @@ function createSeatStatusTarget(config: PhoneConfig): SeatStatusTarget {
   const provider = createLegacySessionProvider({
     host: config.host,
     getToken: () => fetchFsToken(config),
+    // 3.1.19 起 sipWsUrl 必填，但只在 createSession（由它建会话）时才会用到；
+    // 这里只拿它的 setAgentStatus 切坐席状态，会话由自己的服务端拼好，传空占位即可。
+    sipWsUrl: "",
   });
   const { setAgentStatus } = provider;
   if (!setAgentStatus) {

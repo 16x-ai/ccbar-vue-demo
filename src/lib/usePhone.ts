@@ -275,7 +275,23 @@ export function usePhone() {
   }
 
   async function hangup() {
-    await currentCall()?.hangup();
+    const call = currentCall();
+    if (!call) return;
+    // 挂断是幂等的：通话已经结束（对端先挂断、上一轮挂断后 UI 还没刷新、
+    // 内呼多条腿里 active 的那条已终态）时，SDK 3.2.8 的 hangup() 会抛
+    // 「当前通话状态不支持此操作」——这里提前挡掉，静默成功。
+    if (call.state === "ended" || call.state === "failed") return;
+    try {
+      await call.hangup();
+    } catch (error) {
+      // 竞态兜底：点击的瞬间通话被推进了终态（terminate 同步触发 ended/failed 后
+      // 又抛了异常），SDK 报同一个错误码——通话确实已经结束，不算挂断失败。
+      // as CallState：TS 把上面的提前 return 窄化带进了 catch，这里重新按完整类型看。
+      const code = (error as { code?: string })?.code;
+      const state = call.state as CallState;
+      if (code === "CALL_OPERATION_NOT_ALLOWED" && (state === "ended" || state === "failed")) return;
+      throw error;
+    }
   }
   async function hold() {
     await currentCall()?.hold();

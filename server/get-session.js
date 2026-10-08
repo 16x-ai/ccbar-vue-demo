@@ -196,7 +196,7 @@ export async function getLegacySession({
       id: username,
       externalUserId: username,
       displayName: username,
-      extension: username,
+      extension: extension,
       status: "Available",
     },
     sip: {

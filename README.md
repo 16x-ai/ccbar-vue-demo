@@ -143,6 +143,10 @@ dev 环境里 `/get-session`、`/set-agent-status` 由 Vite 转给本地代理�
 - 本地若存在 `D:\code\ccbar-web-sdk\src`，Vite 会 alias 到**源码**（方便边改 SDK 边调）；客户机器上没有该目录时自动用 **npm 包**。强制走 npm 包验证：`CCBAR_LOCAL_SDK=0 npm run build`。
 - 仓库里**不再有**旧版脚本式 SDK（`public\` 下的 `ccbar.js` / `crypto.js` / `message.js` / `jssip-3.4.4.js` 已删）：页面只走 npm 包，交付包里也就不会混进另一套 1.1MB 的旧 SDK。需要对照旧实现时看 `D:\code\xcall\ccbar`（带 token 的 fork）和 `D:\code\ccbar`（能打通外呼的参考页）。
 
+## 多语言
+
+SDK 3.1.19 起错误文案支持**中文 / 英文 / 印尼语 / 西班牙语**四语言，由 `CCBarClient` 的 `locale` 选项决定：显式参数 → 浏览器语言（`navigator.language`）→ 默认 `zh-CN`。页面写死在 `src/lib/usePhone.ts` 的 `locale: "zh-CN"`（一行）：改成 `"en-US"` 等、或删掉这行走浏览器语言回退，刷新页面即可。验证方式：触发任意 SDK 错误（例如签入后拨一个不存在的分机），红字行与日志面板的文案会变成对应语言。语言在客户端构造时解析一次，中途切换浏览器语言不影响已创建的客户端，要换语言就重建客户端。
+
 ## 脚本
 
 | 命令 | 作用 |
